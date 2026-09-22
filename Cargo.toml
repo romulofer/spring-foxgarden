@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = ["crates/spring"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+# Same reasoning as FoxGarden's own workspace: the tree-sitter grammars
+# vendored here are pure C compiled through `cc`, and an unoptimized
+# parser is slow enough to be felt when a large Java file is opened.
+[profile.dev.package."*"]
+opt-level = 2

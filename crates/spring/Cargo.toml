@@ -1,0 +1,26 @@
+[package]
+name = "foxgarden-spring"
+version.workspace = true
+edition.workspace = true
+description = "Java, Kotlin and Spring support for FoxGarden, as an extension"
+
+[lib]
+name = "foxgarden_spring"
+path = "src/lib.rs"
+
+# The whole point of this crate living outside the FoxGarden tree: it can
+# only reach the editor through `fg-extension`, the contribution API. It
+# does not depend on `fg-core`, `syntax` or the app, so nothing here can
+# quietly grow a back door into the editor's internals — that would be a
+# build failure, not a review comment.
+#
+# The path dependency is what Phase A of `PLAN.md` Track 24 looks like: the
+# extension is still compiled into the binary, it simply no longer lives in
+# its tree. Phase B replaces this edge with a manifest and a loader.
+[dependencies]
+fg-extension = { path = "../../../foxgarden/crates/extension" }
+tree-sitter-java = "0.23.5"
+tree-sitter-kotlin-ng = "1.1.0"
+
+[dev-dependencies]
+tree-sitter = "0.26.11"
