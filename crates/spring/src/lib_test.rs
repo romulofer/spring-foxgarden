@@ -4,7 +4,7 @@ use super::{SpringExtension, JAVA, KOTLIN};
 
 fn registry() -> Registry {
     let mut registry = Registry::new();
-    registry.register(&SpringExtension).expect("spring must register");
+    registry.register(Box::new(SpringExtension)).expect("spring must register");
     registry
 }
 

@@ -8,11 +8,12 @@
 //! the compiler rather than by discipline.
 //!
 //! **What is here today**: the two JVM languages, their tree-sitter
-//! grammars and their highlight queries. Track 24's later phases bring the
-//! rest across (language servers in Phase 4; build, run, debug, profile and
-//! test reporting in Phase 5; the Spring panels and editor behaviors in
-//! Phase 6), each one arriving as more `Contributions` rather than as more
-//! reach into the core.
+//! grammars and their highlight queries, plus the two language servers and
+//! the JDK discovery logic they need (Phase 4). Track 24's later phases
+//! bring the rest across (build, run, debug, profile and test reporting in
+//! Phase 5; the Spring panels and editor behaviors in Phase 6), each one
+//! arriving as more `Contributions` rather than as more reach into the
+//! core.
 //!
 //! **Still compiled into the binary.** Phase A of the track keeps every
 //! extension linked in — FoxGarden's own `fg-languages` names this crate as
@@ -20,9 +21,13 @@
 //! that edge with a manifest and a loader, and nothing in this crate's API
 //! assumes which of the two it is being loaded by.
 
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
 use fg_extension::{
-    Contributions, Extension, ExtensionManifest, GrammarContribution, GrammarSource,
-    LanguageContribution, LanguageId, CURRENT_SCHEMA_VERSION,
+    Contributions, Extension, ExtensionManifest, GrammarContribution, GrammarSource, JdkRuntime,
+    LanguageContribution, LanguageId, LanguageServerContribution, ResolvedServerStart,
+    ServerStartContext, CURRENT_SCHEMA_VERSION,
 };
 
 /// The language ids this extension contributes. Public because a
@@ -31,6 +36,22 @@ use fg_extension::{
 /// that will eventually be typed wrong in one of them.
 pub const JAVA: &str = "java";
 pub const KOTLIN: &str = "kotlin";
+
+/// Server ids this extension registers. Public for the same reason as the
+/// language ids — callers that need to look up a server by id should use
+/// these rather than string literals.
+pub const JDTLS: &str = "jdtls";
+pub const KOTLIN_LANGUAGE_SERVER: &str = "kotlin-language-server";
+
+/// The JVM jdt.ls itself requires to *run*.
+const JDTLS_MINIMUM_JDK: u32 = 21;
+
+/// `com.microsoft.java.debug.plugin` bytes, vendored from the FoxGarden tree
+/// via the path dependency. Included here so the spring extension is the only
+/// thing that knows this jar exists.
+const JAVA_DEBUG_PLUGIN_JAR: &[u8] =
+    include_bytes!("../../../../foxgarden/vendor/lsp-servers/java-debug-plugin-0.53.2.jar");
+const JAVA_DEBUG_PLUGIN_VERSION: &str = "0.53.2";
 
 /// Java, Kotlin and (eventually) everything Spring.
 pub struct SpringExtension;
@@ -66,7 +87,36 @@ impl Extension for SpringExtension {
                     highlight_query: Some(include_str!("../queries/highlights_kotlin.scm").to_string()),
                 },
             ],
-            ..Default::default()
+            language_servers: vec![
+                LanguageServerContribution {
+                    id: JDTLS.to_string(),
+                    display_name: "Eclipse JDT Language Server".to_string(),
+                    language_ids: vec![JAVA.to_string()],
+                    binary_name: String::new(),
+                    args: Vec::new(),
+                    initialization_options: None,
+                },
+                LanguageServerContribution {
+                    id: KOTLIN_LANGUAGE_SERVER.to_string(),
+                    display_name: "Kotlin Language Server".to_string(),
+                    language_ids: vec![KOTLIN.to_string()],
+                    binary_name: String::new(),
+                    args: Vec::new(),
+                    initialization_options: None,
+                },
+            ],
+        }
+    }
+
+    fn jdk_runtimes(&self) -> Vec<JdkRuntime> {
+        jdk_runtimes_snapshot()
+    }
+
+    fn resolve_server_start(&self, server_id: &str, ctx: &ServerStartContext) -> Option<Result<ResolvedServerStart, String>> {
+        match server_id {
+            JDTLS => Some(resolve_jdtls(ctx)),
+            KOTLIN_LANGUAGE_SERVER => Some(resolve_kotlin_ls(ctx)),
+            _ => None,
         }
     }
 }
@@ -78,6 +128,409 @@ fn language(id: &str, display_name: &str, extension: &str) -> LanguageContributi
         file_extensions: vec![extension.to_string()],
         filename_patterns: Vec::new(),
     }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// jdt.ls startup
+
+fn resolve_jdtls(ctx: &ServerStartContext) -> Result<ResolvedServerStart, String> {
+    let java = resolve_jdtls_java(&ctx.java_home)?;
+    let debug_bundles = debug_plugin_bundles();
+    let init_opts = jdtls_initialization_options(ctx, &debug_bundles);
+    let restart_key = jdtls_restart_key(ctx, &debug_bundles);
+    Ok(ResolvedServerStart {
+        binary: PathBuf::from(ctx.configured_binary.trim()),
+        args: vec!["--java-executable".to_string(), java.display().to_string()],
+        initialization_options: Some(init_opts),
+        restart_key,
+    })
+}
+
+fn jdtls_initialization_options(ctx: &ServerStartContext, debug_bundles: &[String]) -> String {
+    let runtimes: Vec<serde_json::Value> = ctx
+        .jdk_runtimes
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "name": r.name,
+                "path": r.path.display().to_string(),
+                "default": Some(r.major) == ctx.java_release,
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "extendedClientCapabilities": {
+            "classFileContentsSupport": true,
+            "resolveAdditionalTextEditsSupport": true,
+        },
+        "settings": { "java": { "configuration": { "runtimes": runtimes } } },
+        "bundles": debug_bundles,
+    })
+    .to_string()
+}
+
+fn jdtls_restart_key(ctx: &ServerStartContext, debug_bundles: &[String]) -> String {
+    let runtimes_key: String = ctx
+        .jdk_runtimes
+        .iter()
+        .map(|r| format!("{}:{}", r.major, r.path.display()))
+        .collect::<Vec<_>>()
+        .join(";");
+    format!(
+        "{binary}|{java_home}|{java_release:?}|{runtimes_key}|{debug_bundles:?}",
+        binary = ctx.configured_binary.trim(),
+        java_home = ctx.java_home,
+        java_release = ctx.java_release,
+    )
+}
+
+/// Checks that `java_home` (or auto-detected JVM) satisfies jdt.ls' Java 21
+/// minimum and returns the `java` executable path to pass via
+/// `--java-executable`.
+fn resolve_jdtls_java(java_home: &str) -> Result<PathBuf, String> {
+    let java = java_command(java_home);
+    let major = detect_major_version_at(&java).map_err(|e| {
+        format!("{e} — install a JDK {JDTLS_MINIMUM_JDK}+, or set it in Settings > Language Servers…")
+    })?;
+    if major < JDTLS_MINIMUM_JDK {
+        return Err(format!(
+            "jdt.ls needs a JDK {JDTLS_MINIMUM_JDK} or newer to run, but {} is Java {major} — \
+             install a newer JDK, or point Settings > Language Servers… at one",
+            java.display()
+        ));
+    }
+    Ok(java)
+}
+
+fn java_command(java_home: &str) -> PathBuf {
+    let home = if java_home.trim().is_empty() {
+        std::env::var_os("JAVA_HOME").map(PathBuf::from)
+    } else {
+        Some(PathBuf::from(java_home.trim()))
+    };
+    match home {
+        Some(home) => home.join("bin").join("java"),
+        None => PathBuf::from("java"),
+    }
+}
+
+fn detect_major_version_at(java: &Path) -> Result<u32, String> {
+    let output = Command::new(java)
+        .arg("-version")
+        .output()
+        .map_err(|e| format!("couldn't run {}: {e}", java.display()))?;
+    let banner = String::from_utf8_lossy(&output.stderr);
+    java_major_version(&banner).ok_or_else(|| {
+        format!("couldn't read a version out of `{} -version`", java.display())
+    })
+}
+
+fn java_major_version(version_output: &str) -> Option<u32> {
+    let quoted = version_output.split('"').nth(1)?;
+    let mut parts = quoted.split(['.', '_', '-', '+']);
+    let first = parts.next()?;
+    if first == "1" {
+        parts.next()?.parse().ok()
+    } else {
+        first.parse().ok()
+    }
+}
+
+fn debug_plugin_bundles() -> Vec<String> {
+    match write_debug_plugin_jar() {
+        Ok(path) => vec![path.display().to_string()],
+        Err(error) => {
+            eprintln!("java-debug plugin unavailable, Debug will not work this session: {error}");
+            Vec::new()
+        }
+    }
+}
+
+fn write_debug_plugin_jar() -> Result<PathBuf, String> {
+    let dir = lsp_cache_dir()?;
+    let path = dir.join(format!("java-debug-plugin-{JAVA_DEBUG_PLUGIN_VERSION}.jar"));
+    let already_current =
+        std::fs::metadata(&path).map(|m| m.len() as usize).ok() == Some(JAVA_DEBUG_PLUGIN_JAR.len());
+    if !already_current {
+        std::fs::create_dir_all(&dir).map_err(|e| format!("couldn't create {}: {e}", dir.display()))?;
+        std::fs::write(&path, JAVA_DEBUG_PLUGIN_JAR)
+            .map_err(|e| format!("couldn't write {}: {e}", path.display()))?;
+    }
+    Ok(path)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Kotlin Language Server startup
+
+fn resolve_kotlin_ls(ctx: &ServerStartContext) -> Result<ResolvedServerStart, String> {
+    let binary = PathBuf::from(ctx.configured_binary.trim());
+    ensure_kotlin_stdlib_override_for(&binary);
+    Ok(ResolvedServerStart {
+        binary,
+        args: Vec::new(),
+        initialization_options: Some("{}".to_string()),
+        restart_key: String::new(),
+    })
+}
+
+fn ensure_kotlin_stdlib_override_for(binary: &Path) {
+    let root = match xdg_config_root() {
+        Ok(root) => root,
+        Err(e) => {
+            eprintln!("kotlin-language-server stdlib override: {e}");
+            return;
+        }
+    };
+    if let Err(e) = ensure_kotlin_stdlib_override(binary, &root) {
+        eprintln!("kotlin-language-server stdlib override: {e}");
+    }
+}
+
+fn ensure_kotlin_stdlib_override(binary: &Path, config_root: &Path) -> Result<(), String> {
+    let lib_dir = binary
+        .parent()
+        .and_then(Path::parent)
+        .map(|server_dir| server_dir.join("lib"))
+        .ok_or_else(|| format!("couldn't find a lib/ directory next to {}", binary.display()))?;
+
+    let jars = kotlin_stdlib_jars(&lib_dir)?;
+    if jars.is_empty() {
+        return Err(format!("no kotlin-stdlib*.jar found in {}", lib_dir.display()));
+    }
+
+    let script_path = kotlin_classpath_override_path(config_root);
+    let script = kotlin_classpath_override_script(&jars);
+    if std::fs::read_to_string(&script_path).ok().as_deref() == Some(script.as_str()) {
+        return Ok(());
+    }
+
+    if let Some(parent) = script_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("couldn't create {}: {e}", parent.display()))?;
+    }
+    std::fs::write(&script_path, &script).map_err(|e| format!("couldn't write {}: {e}", script_path.display()))?;
+    ensure_executable(&script_path)?;
+    Ok(())
+}
+
+fn kotlin_stdlib_jars(lib_dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let entries = std::fs::read_dir(lib_dir).map_err(|e| format!("couldn't read {}: {e}", lib_dir.display()))?;
+    let mut jars: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| {
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            name.starts_with("kotlin-stdlib")
+                && name.ends_with(".jar")
+                && !name.contains("-common")
+                && !name.contains("-sources")
+        })
+        .collect();
+    jars.sort();
+    Ok(jars)
+}
+
+fn kotlin_classpath_override_path(config_root: &Path) -> PathBuf {
+    let name = if cfg!(windows) { "classpath.bat" } else { "classpath" };
+    config_root.join("kotlin-language-server").join(name)
+}
+
+fn kotlin_classpath_override_script(jars: &[PathBuf]) -> String {
+    let separator = if cfg!(windows) { ';' } else { ':' };
+    let joined = jars
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>()
+        .join(&separator.to_string());
+    if cfg!(windows) {
+        format!("@echo off\r\necho {joined}\r\n")
+    } else {
+        format!("#!/bin/sh\necho \"{joined}\"\n")
+    }
+}
+
+fn xdg_config_root() -> Result<PathBuf, String> {
+    if let Some(dir) = std::env::var_os("XDG_CONFIG_HOME") {
+        return Ok(PathBuf::from(dir));
+    }
+    directories::UserDirs::new()
+        .map(|dirs| dirs.home_dir().join(".config"))
+        .ok_or_else(|| "couldn't determine a home directory".to_string())
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// JDK discovery — background scan, same logic as lsp_manager in the main
+// tree. Duplication is intentional for Phase 4; Phase 5 removes the copy in
+// the main tree once the installer panel moves here too.
+
+static INSTALLED_RUNTIMES: std::sync::OnceLock<std::sync::Mutex<Option<Vec<JdkRuntime>>>> =
+    std::sync::OnceLock::new();
+static RUNTIME_SCAN_STARTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn runtimes_cache() -> &'static std::sync::Mutex<Option<Vec<JdkRuntime>>> {
+    INSTALLED_RUNTIMES.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+/// Non-blocking snapshot of the JDK scan result. Empty until the background
+/// scan (started here on first call) completes.
+fn jdk_runtimes_snapshot() -> Vec<JdkRuntime> {
+    if let Some(found) = runtimes_cache().lock().ok().and_then(|c| c.clone()) {
+        return found;
+    }
+    if !RUNTIME_SCAN_STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        std::thread::spawn(|| {
+            let found = scan_installed_runtimes();
+            if let Ok(mut cached) = runtimes_cache().lock() {
+                *cached = Some(found);
+            }
+        });
+    }
+    Vec::new()
+}
+
+fn scan_installed_runtimes() -> Vec<JdkRuntime> {
+    let candidates = jdk_home_candidates(
+        std::env::var_os("JAVA_HOME").map(PathBuf::from),
+        java_on_path(),
+        &jdk_search_roots(),
+    );
+    let mut runtimes: Vec<JdkRuntime> = Vec::new();
+    for home in candidates {
+        let Some(major) = java_major_at(&home) else {
+            continue;
+        };
+        if runtimes.iter().any(|r| r.major == major) {
+            continue;
+        }
+        runtimes.push(JdkRuntime {
+            major,
+            name: execution_environment_name(major),
+            path: home,
+        });
+    }
+    runtimes
+}
+
+fn execution_environment_name(major: u32) -> String {
+    match major {
+        0..=5 => "J2SE-1.5".to_string(),
+        6..=8 => format!("JavaSE-1.{major}"),
+        _ => format!("JavaSE-{major}"),
+    }
+}
+
+fn java_on_path() -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join("java"))
+        .find(|candidate| candidate.is_file())
+        .and_then(|candidate| std::fs::canonicalize(candidate).ok())
+}
+
+fn jdk_search_roots() -> Vec<PathBuf> {
+    let mut roots = vec![
+        PathBuf::from("/usr/lib/jvm"),
+        PathBuf::from("/usr/lib64/jvm"),
+        PathBuf::from("/opt/java"),
+        PathBuf::from("/Library/Java/JavaVirtualMachines"),
+    ];
+    if let Some(home) = directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf()) {
+        roots.push(home.join(".sdkman/candidates/java"));
+        roots.push(home.join(".asdf/installs/java"));
+        roots.push(home.join(".jdks"));
+        roots.push(home.join("Library/Java/JavaVirtualMachines"));
+    }
+    #[cfg(windows)]
+    {
+        for program_files in [std::env::var_os("ProgramFiles"), std::env::var_os("ProgramFiles(x86)")]
+            .into_iter()
+            .flatten()
+        {
+            let base = PathBuf::from(program_files);
+            roots.push(base.join("Java"));
+            roots.push(base.join("Eclipse Adoptium"));
+            roots.push(base.join("Amazon Corretto"));
+            roots.push(base.join("Microsoft"));
+            roots.push(base.join("Zulu"));
+        }
+    }
+    roots
+}
+
+fn java_home_at(dir: &Path) -> Option<PathBuf> {
+    [dir.to_path_buf(), dir.join("Contents").join("Home")]
+        .into_iter()
+        .find(|home| home.join("bin").join("java").is_file())
+}
+
+fn version_hint(name: &str) -> u32 {
+    name.split(|c: char| !c.is_ascii_digit())
+        .find(|part| !part.is_empty())
+        .and_then(|part| part.parse().ok())
+        .unwrap_or(0)
+}
+
+fn jdk_home_candidates(
+    env_home: Option<PathBuf>,
+    path_java: Option<PathBuf>,
+    roots: &[PathBuf],
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    candidates.extend(env_home);
+    candidates.extend(path_java.and_then(|java| java.parent()?.parent().map(Path::to_path_buf)));
+
+    for root in roots {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            continue;
+        };
+        let mut installs: Vec<_> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir())
+            .collect();
+        installs.sort_by(|a, b| {
+            let hint =
+                |path: &Path| version_hint(&path.file_name().unwrap_or_default().to_string_lossy());
+            hint(b).cmp(&hint(a)).then_with(|| b.file_name().cmp(&a.file_name()))
+        });
+        candidates.extend(installs);
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    candidates
+        .iter()
+        .filter_map(|candidate| java_home_at(candidate))
+        .filter(|home| seen.insert(std::fs::canonicalize(home).unwrap_or_else(|_| home.clone())))
+        .collect()
+}
+
+fn java_major_at(home: &Path) -> Option<u32> {
+    detect_major_version_at(&home.join("bin").join("java")).ok()
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Shared utilities
+
+fn lsp_cache_dir() -> Result<PathBuf, String> {
+    let base = directories::ProjectDirs::from("", "", "foxgarden")
+        .map(|dirs| dirs.data_local_dir().to_path_buf())
+        .or_else(|| directories::BaseDirs::new().map(|dirs| dirs.data_local_dir().join("foxgarden")))
+        .ok_or("could not resolve data dir")?;
+    Ok(base.join("lsp"))
+}
+
+fn ensure_executable(path: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(path)
+            .map_err(|e| format!("couldn't read {}: {e}", path.display()))?
+            .permissions();
+        perms.set_mode(perms.mode() | 0o111);
+        std::fs::set_permissions(path, perms)
+            .map_err(|e| format!("couldn't make {} executable: {e}", path.display()))?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
