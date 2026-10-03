@@ -9,11 +9,12 @@
 //!
 //! **What is here today**: the two JVM languages, their tree-sitter
 //! grammars and their highlight queries, plus the two language servers and
-//! the JDK discovery logic they need (Phase 4). Track 24's later phases
-//! bring the rest across (build, run, debug, profile and test reporting in
-//! Phase 5; the Spring panels and editor behaviors in Phase 6), each one
-//! arriving as more `Contributions` rather than as more reach into the
-//! core.
+//! the JDK discovery logic they need (Phase 4), plus Maven and Gradle
+//! themselves as contributed build tools — detection, build/test/coverage
+//! commands, classpath resolution, compiler-output parsing and test/coverage
+//! report reading (Phase 5). Track 24's later phases bring the rest across
+//! (the Spring panels and editor behaviors in Phase 6), each one arriving as
+//! more `Contributions` rather than as more reach into the core.
 //!
 //! **Still compiled into the binary.** Phase A of the track keeps every
 //! extension linked in — FoxGarden's own `fg-languages` names this crate as
@@ -25,10 +26,20 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use fg_extension::{
-    Contributions, Extension, ExtensionManifest, GrammarContribution, GrammarSource, JdkRuntime,
-    LanguageContribution, LanguageId, LanguageServerContribution, ResolvedServerStart,
-    ServerStartContext, CURRENT_SCHEMA_VERSION,
+    BuildProblem, BuildTask, Contributions, CommandSpec, Extension, ExtensionManifest, GrammarContribution,
+    CoverageReport, GrammarSource, JdkRuntime, LanguageContribution, LanguageId, LanguageServerContribution,
+    ResolvedServerStart, RunSpec, ServerStartContext, TestCase, TestFailureLocation, CURRENT_SCHEMA_VERSION,
 };
+
+pub mod build_tools;
+pub mod coverage;
+pub mod gradle;
+pub mod maven;
+pub mod run;
+pub mod test_report;
+mod xml;
+
+pub use build_tools::{GRADLE, MAVEN};
 
 /// The language ids this extension contributes. Public because a
 /// contribution from elsewhere (a language server serving Java, say) has to
@@ -105,6 +116,7 @@ impl Extension for SpringExtension {
                     initialization_options: None,
                 },
             ],
+            build_tools: build_tools::contributions(),
         }
     }
 
@@ -118,6 +130,54 @@ impl Extension for SpringExtension {
             KOTLIN_LANGUAGE_SERVER => Some(resolve_kotlin_ls(ctx)),
             _ => None,
         }
+    }
+
+    fn build_command(&self, tool_id: &str, project_root: &Path, task: BuildTask) -> Option<CommandSpec> {
+        build_tools::command(tool_id, project_root, task)
+    }
+
+    fn run_command(&self, tool_id: &str, project_root: &Path, run: &RunSpec) -> Option<Result<CommandSpec, String>> {
+        run::command(tool_id, project_root, run)
+    }
+
+    fn classes_dir(&self, tool_id: &str, project_root: &Path) -> Option<PathBuf> {
+        build_tools::classes_dir(tool_id, project_root)
+    }
+
+    fn runtime_classpath(&self, tool_id: &str, project_root: &Path) -> Option<Result<Vec<PathBuf>, String>> {
+        run::runtime_classpath(tool_id, project_root)
+    }
+
+    fn analysis_classpath(&self, tool_id: &str, project_root: &Path) -> Vec<PathBuf> {
+        run::analysis_classpath(tool_id, project_root)
+    }
+
+    fn parse_build_output_line(&self, _tool_id: &str, line: &str) -> Option<BuildProblem> {
+        build_tools::parse_output_line(line)
+    }
+
+    fn coverage_results(
+        &self,
+        tool_id: &str,
+        project_root: &Path,
+    ) -> Option<Result<CoverageReport, String>> {
+        // Coverage exists for Maven only — JaCoCo invoked as a bare plugin
+        // goal, which Gradle has no equivalent of without editing the
+        // project's own build script.
+        (tool_id == MAVEN).then(|| coverage::results(project_root))
+    }
+
+    fn test_results(&self, tool_id: &str, project_root: &Path) -> Vec<TestCase> {
+        test_report::scan_test_reports(tool_id, project_root)
+    }
+
+    fn test_failure_location(
+        &self,
+        _tool_id: &str,
+        project_root: &Path,
+        case: &TestCase,
+    ) -> Option<TestFailureLocation> {
+        test_report::failure_location(project_root, case)
     }
 }
 
@@ -358,9 +418,9 @@ fn xdg_config_root() -> Result<PathBuf, String> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// JDK discovery — background scan, same logic as lsp_manager in the main
-// tree. Duplication is intentional for Phase 4; Phase 5 removes the copy in
-// the main tree once the installer panel moves here too.
+// JDK discovery — background scan, same logic as `lsp_manager` in the main
+// tree. The copy there goes away once the JDK installer panel moves here
+// too (Track 24 Phase 6).
 
 static INSTALLED_RUNTIMES: std::sync::OnceLock<std::sync::Mutex<Option<Vec<JdkRuntime>>>> =
     std::sync::OnceLock::new();
