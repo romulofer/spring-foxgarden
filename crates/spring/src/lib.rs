@@ -26,14 +26,19 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use fg_extension::{
-    BuildProblem, BuildTask, Contributions, CommandSpec, Extension, ExtensionManifest, GrammarContribution,
-    CoverageReport, GrammarSource, JdkRuntime, LanguageContribution, LanguageId, LanguageServerContribution,
-    ResolvedServerStart, RunSpec, ServerStartContext, TestCase, TestFailureLocation, CURRENT_SCHEMA_VERSION,
+    BuildProblem, BuildTask, CommandSpec, ConfigProperty, Contributions, CoverageReport, Extension, ExtensionManifest,
+    GrammarContribution, GrammarSource, JdkRuntime, LanguageContribution, LanguageId, LanguageServerContribution,
+    NodeKinds, ProjectRelease, ResolvedServerStart, RunSpec, RunTarget, ScaffoldSpec, ServerStartContext, TestCase,
+    TestFailureLocation, CURRENT_SCHEMA_VERSION,
 };
 
 pub mod build_tools;
+pub mod config_metadata;
 pub mod coverage;
 pub mod gradle;
+pub mod java_release;
+pub mod main_entry;
+pub mod scaffold;
 pub mod maven;
 pub mod run;
 pub mod test_report;
@@ -85,6 +90,7 @@ impl Extension for SpringExtension {
                     language_id: JAVA.to_string(),
                     source: GrammarSource::Builtin(tree_sitter_java::LANGUAGE),
                     highlight_query: Some(include_str!("../queries/highlights_java.scm").to_string()),
+                    node_kinds: java_node_kinds(),
                 },
                 GrammarContribution {
                     language_id: KOTLIN.to_string(),
@@ -96,6 +102,7 @@ impl Extension for SpringExtension {
                     // here in `Cargo.toml`. Their headers record what was
                     // changed and why.
                     highlight_query: Some(include_str!("../queries/highlights_kotlin.scm").to_string()),
+                    node_kinds: kotlin_node_kinds(),
                 },
             ],
             language_servers: vec![
@@ -117,6 +124,7 @@ impl Extension for SpringExtension {
                 },
             ],
             build_tools: build_tools::contributions(),
+            scaffolds: scaffold::contributions(),
         }
     }
 
@@ -179,6 +187,80 @@ impl Extension for SpringExtension {
     ) -> Option<TestFailureLocation> {
         test_report::failure_location(project_root, case)
     }
+
+    fn scaffold_files(&self, spec: &ScaffoldSpec) -> Option<Vec<(PathBuf, String)>> {
+        scaffold::scaffold_files(spec)
+    }
+
+    fn run_targets(
+        &self,
+        language_id: &str,
+        tree: &tree_sitter::Tree,
+        source: &str,
+        file_stem: &str,
+    ) -> Vec<RunTarget> {
+        main_entry::main_entries(tree, source, language_id, file_stem)
+    }
+
+    fn project_release(&self, project_root: &Path) -> Option<ProjectRelease> {
+        java_release::detect(project_root)
+    }
+
+    fn config_properties(&self, project_root: &Path) -> Vec<ConfigProperty> {
+        config_metadata::properties_for_project(project_root)
+    }
+}
+
+/// Java's node vocabulary. Declarations for sticky scroll, bodies and block
+/// comments for folding, `import_declaration` for folding an import block as
+/// a unit — every name taken from `tree-sitter-java`'s own parse output.
+fn java_node_kinds() -> NodeKinds {
+    NodeKinds {
+        scopes: names(&[
+            "class_declaration",
+            "interface_declaration",
+            "enum_declaration",
+            "record_declaration",
+            "annotation_type_declaration",
+            "method_declaration",
+            "constructor_declaration",
+        ]),
+        foldable: names(&[
+            "class_body",
+            "interface_body",
+            "enum_body",
+            "annotation_type_body",
+            "constructor_body",
+            "block", // method and control-flow bodies
+            "block_comment",
+        ]),
+        import: Some("import_declaration".to_string()),
+    }
+}
+
+/// Kotlin's, verified against `tree-sitter-kotlin-ng` 1.1.0's real parse
+/// output rather than assumed from the Java grammar: `class_body` covers
+/// class/interface/object bodies alike (interface and object declarations
+/// reuse `class_declaration`/`class_body`, distinguished only by keyword),
+/// `enum_class_body` is the one exception with its own kind, `block` is
+/// method *and* control-flow bodies alike (a `function_body` node wraps a
+/// `block` at the exact same span, so folding `block` covers both without a
+/// second redundant entry), and `block_comment` covers regular comments and
+/// KDoc alike.
+///
+/// No scopes yet: sticky scroll's Kotlin vocabulary still has to be derived
+/// from the grammar's own `node-types.json` the same way these were, and a
+/// guess copied from Java would pin the wrong lines.
+fn kotlin_node_kinds() -> NodeKinds {
+    NodeKinds {
+        scopes: Vec::new(),
+        foldable: names(&["class_body", "enum_class_body", "block", "block_comment"]),
+        import: Some("import".to_string()),
+    }
+}
+
+fn names(kinds: &[&str]) -> Vec<String> {
+    kinds.iter().map(|k| (*k).to_string()).collect()
 }
 
 fn language(id: &str, display_name: &str, extension: &str) -> LanguageContribution {
