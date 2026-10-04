@@ -27,7 +27,7 @@ use std::process::Command;
 
 use fg_extension::{
     BuildProblem, BuildTask, BuildToolHandle, CommandSpec, ConfigProperty, Contributions, CoverageReport, Extension, ExtensionManifest,
-    GrammarContribution, GrammarSource, JdkRuntime, LanguageContribution, LanguageId, LanguageServerContribution,
+    GrammarContribution, GrammarSource, HttpRoute, JdkRuntime, LanguageContribution, LanguageId, LanguageServerContribution,
     NodeKinds, ProjectRelease, ResolvedServerStart, RunSpec, RunTarget, ScaffoldSpec, ServerStartContext, TestCase,
     TestFailureLocation, CURRENT_SCHEMA_VERSION,
 };
@@ -36,6 +36,7 @@ pub mod build_tools;
 pub mod config_metadata;
 pub mod coverage;
 pub mod gradle;
+pub mod http_routes;
 pub mod java_release;
 pub mod main_entry;
 pub mod scaffold;
@@ -125,6 +126,7 @@ impl Extension for SpringExtension {
             ],
             build_tools: build_tools::contributions(),
             scaffolds: scaffold::contributions(),
+            http_route_languages: vec![JAVA.to_string(), KOTLIN.to_string()],
         }
     }
 
@@ -200,6 +202,10 @@ impl Extension for SpringExtension {
         file_stem: &str,
     ) -> Vec<RunTarget> {
         main_entry::main_entries(tree, source, language_id, file_stem)
+    }
+
+    fn http_routes(&self, language_id: &str, tree: &tree_sitter::Tree, source: &str) -> Vec<HttpRoute> {
+        http_routes::http_routes(tree, source, language_id)
     }
 
     fn project_release(&self, project_root: &Path) -> Option<ProjectRelease> {
