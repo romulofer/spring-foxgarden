@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use fg_extension::{
-    BuildProblem, BuildTask, CommandSpec, ConfigProperty, Contributions, CoverageReport, Extension, ExtensionManifest,
+    BuildProblem, BuildTask, BuildToolHandle, CommandSpec, ConfigProperty, Contributions, CoverageReport, Extension, ExtensionManifest,
     GrammarContribution, GrammarSource, JdkRuntime, LanguageContribution, LanguageId, LanguageServerContribution,
     NodeKinds, ProjectRelease, ResolvedServerStart, RunSpec, RunTarget, ScaffoldSpec, ServerStartContext, TestCase,
     TestFailureLocation, CURRENT_SCHEMA_VERSION,
@@ -206,8 +206,8 @@ impl Extension for SpringExtension {
         java_release::detect(project_root)
     }
 
-    fn config_properties(&self, project_root: &Path) -> Vec<ConfigProperty> {
-        config_metadata::properties_for_project(project_root)
+    fn config_properties(&self, project_root: &Path, build_tool: &BuildToolHandle) -> Vec<ConfigProperty> {
+        config_metadata::properties_for_project(project_root, build_tool)
     }
 }
 

@@ -15,10 +15,8 @@
 use std::io::Read;
 use std::path::Path;
 
-use fg_extension::ConfigProperty;
+use fg_extension::{BuildToolHandle, ConfigProperty};
 use serde::Deserialize;
-
-use crate::build_tools::{GRADLE, MAVEN};
 
 /// One `spring-configuration-metadata.json` `properties[]` entry, the only
 /// part of the file's real shape (`groups`/`properties`/`hints`/`ignored`)
@@ -112,16 +110,13 @@ pub fn scan_classpath_for_metadata(classpath: &[std::path::PathBuf]) -> Vec<Spri
 }
 
 /// Every configuration key `project_root`'s own dependencies declare — the
-/// whole scan, from "which build tool is this" through classpath resolution
-/// to the jars' metadata. Slow (it shells out to `mvn`/`gradle`), so the
-/// editor runs it on a background thread; a project with no recognizable
-/// build tool, or one whose classpath fails to resolve, yields nothing
+/// whole scan, from classpath resolution through `build_tool` (whichever
+/// tool the registry detected, this extension's own or not) to the jars'
+/// metadata. Slow (it shells out to `mvn`/`gradle`), so the editor runs it
+/// on a background thread; a classpath that fails to resolve yields nothing
 /// rather than an error, since nobody asked for this scan directly.
-pub fn properties_for_project(project_root: &Path) -> Vec<ConfigProperty> {
-    let classpath = detect_tool(project_root)
-        .map(|tool_id| crate::run::analysis_classpath(tool_id, project_root))
-        .unwrap_or_default();
-    scan_classpath_for_metadata(&classpath)
+pub fn properties_for_project(project_root: &Path, build_tool: &BuildToolHandle) -> Vec<ConfigProperty> {
+    scan_classpath_for_metadata(&build_tool.analysis_classpath(project_root))
         .into_iter()
         .map(|p| ConfigProperty {
             name: p.name,
@@ -130,20 +125,6 @@ pub fn properties_for_project(project_root: &Path) -> Vec<ConfigProperty> {
             default_value: p.default_value,
         })
         .collect()
-}
-
-/// The same marker-file check the registry does, repeated here because this
-/// scan starts from a project root rather than from an already-detected
-/// tool — and an extension cannot ask the registry anything.
-fn detect_tool(project_root: &Path) -> Option<&'static str> {
-    let exists = |name: &str| -> bool { project_root.join(name).is_file() };
-    if exists("pom.xml") {
-        Some(MAVEN)
-    } else if exists("build.gradle.kts") || exists("build.gradle") {
-        Some(GRADLE)
-    } else {
-        None
-    }
 }
 
 #[cfg(test)]
