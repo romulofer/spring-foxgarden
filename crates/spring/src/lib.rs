@@ -26,21 +26,28 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use fg_extension::{
-    BuildProblem, BuildTask, BuildToolHandle, CommandSpec, ConfigProperty, Contributions, CoverageReport, Extension, ExtensionManifest,
-    GrammarContribution, GrammarSource, HttpRoute, JdkRuntime, LanguageContribution, LanguageId, LanguageServerContribution,
-    NodeKinds, ProjectRelease, ResolvedServerStart, RunSpec, RunTarget, ScaffoldSpec, ServerStartContext, TestCase,
-    TestFailureLocation, CURRENT_SCHEMA_VERSION,
+    BuildProblem, BuildTask, BuildToolHandle, CodeGeneration, CommandSpec, ConfigProperty, Contributions, CoverageReport,
+    Extension, ExtensionManifest, GrammarContribution, GrammarSource, HttpRoute, JdkRuntime, LanguageContribution,
+    LanguageId, LanguageServerContribution, MemberView, NodeKinds, ProjectRelease, ReceiverType, ResolvedServerStart,
+    RunSpec, RunTarget, ScaffoldSpec, ServerStartContext, TestCase, TestFailureLocation, TypeDeclaration, TypeFields,
+    TypeMember, CURRENT_SCHEMA_VERSION,
 };
 
 pub mod build_tools;
+mod code_model;
+mod codegen;
 pub mod config_metadata;
 pub mod coverage;
+mod fields;
 pub mod gradle;
 pub mod http_routes;
+mod identifier_type;
 pub mod java_release;
+mod kotlin_members;
 pub mod main_entry;
 pub mod scaffold;
 pub mod maven;
+mod methods;
 pub mod run;
 pub mod test_report;
 mod xml;
@@ -206,6 +213,54 @@ impl Extension for SpringExtension {
 
     fn http_routes(&self, language_id: &str, tree: &tree_sitter::Tree, source: &str) -> Vec<HttpRoute> {
         http_routes::http_routes(tree, source, language_id)
+    }
+
+    fn enclosing_type(
+        &self,
+        language_id: &str,
+        tree: &tree_sitter::Tree,
+        source: &str,
+        byte: usize,
+    ) -> Option<TypeDeclaration> {
+        code_model::enclosing_type(language_id, tree, source, byte)
+    }
+
+    fn supertype(&self, language_id: &str, tree: &tree_sitter::Tree, source: &str, type_name: &str) -> Option<String> {
+        code_model::supertype(language_id, tree, source, type_name)
+    }
+
+    fn type_members(
+        &self,
+        language_id: &str,
+        tree: &tree_sitter::Tree,
+        source: &str,
+        type_name: &str,
+        view: MemberView,
+    ) -> Vec<TypeMember> {
+        code_model::type_members(language_id, tree, source, type_name, view)
+    }
+
+    fn receiver_type(
+        &self,
+        language_id: &str,
+        tree: &tree_sitter::Tree,
+        source: &str,
+        byte: usize,
+        receiver: &str,
+    ) -> Option<ReceiverType> {
+        code_model::receiver_type(language_id, tree, source, byte, receiver)
+    }
+
+    fn generates_code(&self, language_id: &str) -> bool {
+        language_id == JAVA
+    }
+
+    fn types_with_fields(&self, language_id: &str, tree: &tree_sitter::Tree, source: &str) -> Vec<TypeFields> {
+        code_model::types_with_fields(language_id, tree, source)
+    }
+
+    fn generate_code(&self, language_id: &str, request: CodeGeneration<'_>, indent_unit: &str) -> Option<String> {
+        self.generates_code(language_id).then(|| codegen::generate(request, indent_unit))
     }
 
     fn project_release(&self, project_root: &Path) -> Option<ProjectRelease> {
