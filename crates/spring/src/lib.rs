@@ -27,7 +27,7 @@ use std::process::Command;
 
 use fg_extension::{
     AnalyzerFinding, AnalyzerRun, BuildProblem, BuildTask, BuildToolHandle, CodeGeneration, CommandSpec, ConfigProperty, Contributions, CoverageReport,
-    Extension, ExtensionManifest, GrammarContribution, GrammarSource, HttpRoute, ImportCandidate, ImportEdit, JdkRuntime, LanguageContribution,
+    Extension, ExtensionManifest, GrammarContribution, GrammarSource, DocStub, HttpRoute, ImportCandidate, ImportEdit, JdkRuntime, LanguageContribution,
     LanguageId, LanguageServerContribution, MemberView, NodeKinds, ProjectRelease, ReceiverType, ResolvedServerStart,
     RunSpec, RunTarget, ScaffoldSpec, ServerStartContext, TestCase, TestFailureLocation, TypeDeclaration, TypeFields,
     TypeMember, CURRENT_SCHEMA_VERSION,
@@ -46,6 +46,7 @@ pub mod gradle;
 pub mod http_routes;
 mod identifier_type;
 mod imports;
+mod javadoc;
 pub mod java_release;
 mod kotlin_members;
 pub mod main_entry;
@@ -270,6 +271,10 @@ impl Extension for SpringExtension {
 
     fn run_analyzer(&self, analyzer_id: &str, run: &AnalyzerRun) -> Result<Vec<AnalyzerFinding>, String> {
         analyzers::run(analyzer_id, run)
+    }
+
+    fn doc_stub(&self, language_id: &str, tree: &tree_sitter::Tree, source: &str, byte: usize) -> Option<DocStub> {
+        javadoc::doc_stub(tree, source, language_id, byte)
     }
 
     fn annotation_candidates(&self, language_id: &str) -> Vec<ImportCandidate> {
