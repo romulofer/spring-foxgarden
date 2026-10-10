@@ -7,14 +7,15 @@
 //! depends on nothing else of FoxGarden's, so the boundary is enforced by
 //! the compiler rather than by discipline.
 //!
-//! **What is here today**: the two JVM languages, their tree-sitter
-//! grammars and their highlight queries, plus the two language servers and
-//! the JDK discovery logic they need (Phase 4), plus Maven and Gradle
-//! themselves as contributed build tools — detection, build/test/coverage
-//! commands, classpath resolution, compiler-output parsing and test/coverage
-//! report reading (Phase 5). Track 24's later phases bring the rest across
-//! (the Spring panels and editor behaviors in Phase 6), each one arriving as
-//! more `Contributions` rather than as more reach into the core.
+//! **What is here**: the two JVM languages with their grammars, highlight
+//! queries, node-kind vocabularies, live templates and keywords; both
+//! language servers and the JDK discovery they need; Maven and Gradle as
+//! build tools (commands, classpaths, report parsing, scaffolding); run
+//! markers and Java debug support; the type model behind dot-completion and
+//! code generation; imports, annotation completion and doc-comment stubs;
+//! the Spring HTTP route map and configuration keys; and Checkstyle, PMD and
+//! SpotBugs as analyzers. Each arrives as a `Contributions` field or an
+//! `Extension` method rather than as reach into the core.
 //!
 //! **Still compiled into the binary.** Phase A of the track keeps every
 //! extension linked in — FoxGarden's own `fg-languages` names this crate as
@@ -27,7 +28,7 @@ use std::process::Command;
 
 use fg_extension::{
     AnalyzerFinding, AnalyzerRun, BuildProblem, BuildTask, BuildToolHandle, CodeGeneration, CommandSpec, ConfigProperty, Contributions, CoverageReport,
-    Extension, ExtensionManifest, GrammarContribution, GrammarSource, DocStub, HttpRoute, ImportCandidate, ImportEdit, JdkRuntime, LanguageContribution,
+    Extension, ExtensionManifest, GrammarContribution, GrammarSource, DocStub, HttpRoute, ImportCandidate, ImportEdit, Snippet, JdkRuntime, LanguageContribution,
     LanguageId, LanguageServerContribution, MemberView, NodeKinds, ProjectRelease, ReceiverType, ResolvedServerStart,
     RunSpec, RunTarget, ScaffoldSpec, ServerStartContext, TestCase, TestFailureLocation, TypeDeclaration, TypeFields,
     TypeMember, CURRENT_SCHEMA_VERSION,
@@ -53,6 +54,7 @@ pub mod main_entry;
 pub mod scaffold;
 pub mod maven;
 mod methods;
+mod snippets;
 pub mod run;
 pub mod test_report;
 mod xml;
@@ -119,6 +121,10 @@ impl Extension for SpringExtension {
                 },
             ],
             analyzers: analyzers::contributions(),
+            // Breakpoints go through java-debug, which serves Java only —
+            // there's no evidence it debugs Kotlin, and a gutter that can
+            // never pause anything would mislead.
+            debug_languages: vec![JAVA.to_string()],
             language_servers: vec![
                 LanguageServerContribution {
                     id: JDTLS.to_string(),
@@ -275,6 +281,14 @@ impl Extension for SpringExtension {
 
     fn doc_stub(&self, language_id: &str, tree: &tree_sitter::Tree, source: &str, byte: usize) -> Option<DocStub> {
         doc_stub::doc_stub(tree, source, language_id, byte)
+    }
+
+    fn snippets(&self, language_id: &str) -> Vec<Snippet> {
+        snippets::snippets(language_id)
+    }
+
+    fn keywords(&self, language_id: &str) -> Vec<String> {
+        snippets::keywords(language_id)
     }
 
     fn annotation_candidates(&self, language_id: &str) -> Vec<ImportCandidate> {
