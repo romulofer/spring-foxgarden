@@ -26,13 +26,16 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use fg_extension::{
-    BuildProblem, BuildTask, BuildToolHandle, CodeGeneration, CommandSpec, ConfigProperty, Contributions, CoverageReport,
-    Extension, ExtensionManifest, GrammarContribution, GrammarSource, HttpRoute, JdkRuntime, LanguageContribution,
+    AnalyzerFinding, AnalyzerRun, BuildProblem, BuildTask, BuildToolHandle, CodeGeneration, CommandSpec, ConfigProperty, Contributions, CoverageReport,
+    Extension, ExtensionManifest, GrammarContribution, GrammarSource, HttpRoute, ImportCandidate, ImportEdit, JdkRuntime, LanguageContribution,
     LanguageId, LanguageServerContribution, MemberView, NodeKinds, ProjectRelease, ReceiverType, ResolvedServerStart,
     RunSpec, RunTarget, ScaffoldSpec, ServerStartContext, TestCase, TestFailureLocation, TypeDeclaration, TypeFields,
     TypeMember, CURRENT_SCHEMA_VERSION,
 };
 
+mod analyzers;
+mod annotations;
+mod boilerplate;
 pub mod build_tools;
 mod code_model;
 mod codegen;
@@ -42,6 +45,7 @@ mod fields;
 pub mod gradle;
 pub mod http_routes;
 mod identifier_type;
+mod imports;
 pub mod java_release;
 mod kotlin_members;
 pub mod main_entry;
@@ -113,6 +117,7 @@ impl Extension for SpringExtension {
                     node_kinds: kotlin_node_kinds(),
                 },
             ],
+            analyzers: analyzers::contributions(),
             language_servers: vec![
                 LanguageServerContribution {
                     id: JDTLS.to_string(),
@@ -261,6 +266,28 @@ impl Extension for SpringExtension {
 
     fn generate_code(&self, language_id: &str, request: CodeGeneration<'_>, indent_unit: &str) -> Option<String> {
         self.generates_code(language_id).then(|| codegen::generate(request, indent_unit))
+    }
+
+    fn run_analyzer(&self, analyzer_id: &str, run: &AnalyzerRun) -> Result<Vec<AnalyzerFinding>, String> {
+        analyzers::run(analyzer_id, run)
+    }
+
+    fn annotation_candidates(&self, language_id: &str) -> Vec<ImportCandidate> {
+        annotations::candidates(language_id)
+    }
+
+    fn import_edit(
+        &self,
+        language_id: &str,
+        tree: &tree_sitter::Tree,
+        source: &str,
+        qualified_name: &str,
+    ) -> Option<ImportEdit> {
+        imports::import_edit(tree, source, language_id, qualified_name)
+    }
+
+    fn new_file_template(&self, language_id: &str, project_root: &Path, file_path: &Path) -> Option<String> {
+        boilerplate::generate(language_id, project_root, file_path)
     }
 
     fn project_release(&self, project_root: &Path) -> Option<ProjectRelease> {
