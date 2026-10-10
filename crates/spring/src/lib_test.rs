@@ -1,6 +1,6 @@
 use fg_extension::{Extension, GrammarSource, Registry};
 
-use super::{SpringExtension, JAVA, KOTLIN};
+use super::{SpringExtension, JAVA, JDK, KOTLIN};
 
 fn registry() -> Registry {
     let mut registry = Registry::new();
@@ -33,7 +33,7 @@ fn recognizes_java_and_kotlin_source_files() {
 #[test]
 fn claims_no_other_file_type() {
     let registry = registry();
-    // The add-on contributes the JVM languages and nothing else — a YAML
+    // The extension contributes the JVM languages and nothing else — a YAML
     // file in a Spring project is still the editor's own `file-types`
     // extension's business, not this one's. Asserted because the tempting
     // shortcut (claiming `.yml` here, since Spring reads
@@ -88,5 +88,84 @@ fn every_contributed_grammar_parses_its_language_and_compiles_its_query() {
             .unwrap_or_else(|| panic!("{language_id} must contribute a highlight query"));
         tree_sitter::Query::new(&ts, query_source)
             .unwrap_or_else(|e| panic!("{language_id}'s highlight query must compile: {e}"));
+    }
+}
+
+#[test]
+fn contributes_the_jdk_runtime_kind() {
+    let runtimes = registry().runtimes();
+    assert_eq!(runtimes.len(), 1);
+    assert_eq!(runtimes[0].id(), JDK);
+    assert_eq!(runtimes[0].display_name(), "JDKs");
+    assert_eq!(runtimes[0].contribution.item_name, "JDK");
+}
+
+#[test]
+fn a_directory_without_a_java_binary_is_not_a_jdk() {
+    let dir = tempfile::tempdir().unwrap();
+    let error = registry().runtimes()[0].detect(dir.path()).unwrap_err();
+    assert!(error.contains("couldn't run"), "{error}");
+}
+
+#[test]
+fn another_runtime_kinds_ids_are_not_answered() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(SpringExtension.detect_runtime("node", dir.path()).is_err());
+    assert!(SpringExtension.discover_runtimes("node").is_empty());
+}
+
+#[cfg(unix)]
+mod fake_jdk {
+    use std::path::{Path, PathBuf};
+
+    use super::registry;
+
+    fn fake_jdk(dir: &Path, banner: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let bin = dir.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let script = bin.join("java");
+        std::fs::write(&script, format!("#!/bin/sh\necho '{banner}' >&2\n")).unwrap();
+        let mut perms = std::fs::metadata(&script).unwrap().permissions();
+        perms.set_mode(perms.mode() | 0o755);
+        std::fs::set_permissions(&script, perms).unwrap();
+        wait_until_executable(&script);
+        dir.to_path_buf()
+    }
+
+    /// Another test thread that forks while this one is writing `script`
+    /// carries the write handle into its child until that child execs, and
+    /// running the script meanwhile fails with "Text file busy" (ETXTBSY) —
+    /// an occasional failure under parallel `cargo test` that has nothing to
+    /// do with what the test checks. Runs it until that window has passed.
+    fn wait_until_executable(script: &Path) {
+        for _ in 0..100 {
+            match std::process::Command::new(script).output() {
+                Err(err) if err.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                _ => return,
+            }
+        }
+    }
+
+    #[test]
+    fn detect_records_the_real_detected_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = fake_jdk(dir.path(), "openjdk version \"17.0.4\" 2022-07-19 LTS");
+
+        let install = registry().runtimes()[0].detect(&home).expect("detects a fake JDK 17");
+
+        assert_eq!(install.major_version, 17);
+        assert_eq!(install.home, home);
+        assert_eq!(install.label, "Java 17");
+    }
+
+    #[test]
+    fn detect_reads_the_legacy_one_dot_eight_banner() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = fake_jdk(dir.path(), "java version \"1.8.0_292\"");
+
+        assert_eq!(registry().runtimes()[0].detect(&home).unwrap().major_version, 8);
     }
 }

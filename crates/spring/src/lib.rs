@@ -1,4 +1,4 @@
-//! The Spring/JVM add-on for FoxGarden.
+//! The Spring/JVM extension for FoxGarden.
 //!
 //! FoxGarden's core is being made language-agnostic (`PLAN.md` Track 24 in
 //! that repository); everything that knows what Java, Kotlin, Maven,
@@ -72,6 +72,8 @@ pub const KOTLIN: &str = "kotlin";
 /// language ids — callers that need to look up a server by id should use
 /// these rather than string literals.
 pub const JDTLS: &str = "jdtls";
+/// The runtime kind of the JDK inventory (`Contributions::runtimes`).
+pub const JDK: &str = "jdk";
 pub const KOTLIN_LANGUAGE_SERVER: &str = "kotlin-language-server";
 
 /// The JVM jdt.ls itself requires to *run*.
@@ -144,6 +146,15 @@ impl Extension for SpringExtension {
                 },
             ],
             build_tools: build_tools::contributions(),
+            runtimes: vec![fg_extension::RuntimeContribution {
+                id: JDK.to_string(),
+                display_name: "JDKs".to_string(),
+                item_name: "JDK".to_string(),
+                description: "JDKs registered here are available to target when analyzing or scaffolding a \
+                              project at a specific Java version \u{2014} separate from the Java Home in \
+                              Language Servers, which is only the JVM jdt.ls itself runs under."
+                    .to_string(),
+            }],
             scaffolds: scaffold::contributions(),
             http_route_languages: vec![JAVA.to_string(), KOTLIN.to_string()],
         }
@@ -151,6 +162,24 @@ impl Extension for SpringExtension {
 
     fn jdk_runtimes(&self) -> Vec<JdkRuntime> {
         jdk_runtimes_snapshot()
+    }
+
+    fn detect_runtime(&self, runtime_id: &str, home: &Path) -> Result<fg_extension::RuntimeInstall, String> {
+        if runtime_id != JDK {
+            return Err(format!("unknown runtime {runtime_id}"));
+        }
+        let major = detect_major_version_at(&home.join("bin").join("java"))?;
+        Ok(jdk_install(home.to_path_buf(), major))
+    }
+
+    fn discover_runtimes(&self, runtime_id: &str) -> Vec<fg_extension::RuntimeInstall> {
+        if runtime_id != JDK {
+            return Vec::new();
+        }
+        scan_installed_runtimes()
+            .into_iter()
+            .map(|runtime| jdk_install(runtime.path, runtime.major))
+            .collect()
     }
 
     fn resolve_server_start(&self, server_id: &str, ctx: &ServerStartContext) -> Option<Result<ResolvedServerStart, String>> {
@@ -658,6 +687,14 @@ fn scan_installed_runtimes() -> Vec<JdkRuntime> {
         });
     }
     runtimes
+}
+
+fn jdk_install(home: PathBuf, major: u32) -> fg_extension::RuntimeInstall {
+    fg_extension::RuntimeInstall {
+        home,
+        label: format!("Java {major}"),
+        major_version: major,
+    }
 }
 
 fn execution_environment_name(major: u32) -> String {
