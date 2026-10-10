@@ -46,7 +46,7 @@ pub mod gradle;
 pub mod http_routes;
 mod identifier_type;
 mod imports;
-mod javadoc;
+mod doc_stub;
 pub mod java_release;
 mod kotlin_members;
 pub mod main_entry;
@@ -274,7 +274,7 @@ impl Extension for SpringExtension {
     }
 
     fn doc_stub(&self, language_id: &str, tree: &tree_sitter::Tree, source: &str, byte: usize) -> Option<DocStub> {
-        javadoc::doc_stub(tree, source, language_id, byte)
+        doc_stub::doc_stub(tree, source, language_id, byte)
     }
 
     fn annotation_candidates(&self, language_id: &str) -> Vec<ImportCandidate> {
