@@ -28,7 +28,7 @@ use std::process::Command;
 
 use fg_extension::{
     AnalyzerFinding, AnalyzerRun, BuildProblem, BuildTask, BuildToolHandle, CodeGeneration, CommandSpec, ConfigProperty, Contributions, CoverageReport,
-    ArchiveKind, Extension, ExtensionManifest, LatestVersionSource, ServerInstall, GrammarContribution, GrammarSource, DocStub, HttpRoute, ImportCandidate, ImportEdit, Snippet, JdkRuntime, LanguageContribution,
+    ArchiveKind, Extension, ExtensionManifest, FileIcon, LatestVersionSource, ServerInstall, GrammarContribution, GrammarSource, DocStub, HttpRoute, ImportCandidate, ImportEdit, Snippet, JdkRuntime, LanguageContribution,
     DebugAdapterContribution, DebugLaunch, HostRuntime, LanguageId, LanguageServerContribution, MemberView, NodeKinds, ProjectRelease, ReceiverType, ResolvedServerStart,
     RunSpec, RunTarget, ScaffoldSpec, ServerStartContext, TestCase, TestFailureLocation, TypeDeclaration, TypeFields,
     TypeMember, VirtualDocuments, CURRENT_SCHEMA_VERSION,
@@ -211,6 +211,18 @@ impl Extension for SpringExtension {
             }],
             scaffolds: scaffold::contributions(),
             http_route_languages: vec![JAVA.to_string(), KOTLIN.to_string()],
+            source_root_dir_names: vec!["java".to_string(), "kotlin".to_string()],
+            workspace_edit_commands: vec!["java.apply.workspaceEdit".to_string()],
+            file_icons: vec![
+                FileIcon {
+                    language_id: JAVA.to_string(),
+                    glyph: '\u{e738}',
+                },
+                FileIcon {
+                    language_id: KOTLIN.to_string(),
+                    glyph: '\u{e634}',
+                },
+            ],
         }
     }
 
