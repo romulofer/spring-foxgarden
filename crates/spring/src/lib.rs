@@ -29,9 +29,9 @@ use std::process::Command;
 use fg_extension::{
     AnalyzerFinding, AnalyzerRun, BuildProblem, BuildTask, BuildToolHandle, CodeGeneration, CommandSpec, ConfigProperty, Contributions, CoverageReport,
     ArchiveKind, Extension, ExtensionManifest, LatestVersionSource, ServerInstall, GrammarContribution, GrammarSource, DocStub, HttpRoute, ImportCandidate, ImportEdit, Snippet, JdkRuntime, LanguageContribution,
-    HostRuntime, LanguageId, LanguageServerContribution, MemberView, NodeKinds, ProjectRelease, ReceiverType, ResolvedServerStart,
+    DebugAdapterContribution, DebugLaunch, HostRuntime, LanguageId, LanguageServerContribution, MemberView, NodeKinds, ProjectRelease, ReceiverType, ResolvedServerStart,
     RunSpec, RunTarget, ScaffoldSpec, ServerStartContext, TestCase, TestFailureLocation, TypeDeclaration, TypeFields,
-    TypeMember, CURRENT_SCHEMA_VERSION,
+    TypeMember, VirtualDocuments, CURRENT_SCHEMA_VERSION,
 };
 
 mod analyzers;
@@ -131,7 +131,11 @@ impl Extension for SpringExtension {
             // Breakpoints go through java-debug, which serves Java only —
             // there's no evidence it debugs Kotlin, and a gutter that can
             // never pause anything would mislead.
-            debug_languages: vec![JAVA.to_string()],
+            debug_adapters: vec![DebugAdapterContribution {
+                language_id: JAVA.to_string(),
+                adapter_id: "java".to_string(),
+                start_command: "vscode.java.startDebugSession".to_string(),
+            }],
             language_servers: vec![
                 LanguageServerContribution {
                     id: JDTLS.to_string(),
@@ -140,6 +144,14 @@ impl Extension for SpringExtension {
                     binary_name: String::new(),
                     args: Vec::new(),
                     initialization_options: None,
+                    // `java/classFileContents` is the only way to read a JDK or
+                    // library type's decompiled source: a `jdt://` location
+                    // names no file on disk.
+                    virtual_documents: Some(VirtualDocuments {
+                        uri_scheme: "jdt".to_string(),
+                        request_method: "java/classFileContents".to_string(),
+                        file_extension: "java".to_string(),
+                    }),
                     host_runtime: Some(HostRuntime {
                         runtime_id: JDK.to_string(),
                         minimum_major_version: JDTLS_MINIMUM_JDK,
@@ -174,6 +186,7 @@ impl Extension for SpringExtension {
                     args: Vec::new(),
                     initialization_options: None,
                     host_runtime: None,
+                    virtual_documents: None,
                     install: Some(ServerInstall {
                         version: "1.3.13".to_string(),
                         archive: ArchiveKind::Zip,
@@ -398,6 +411,10 @@ impl Extension for SpringExtension {
         boilerplate::generate(language_id, project_root, file_path)
     }
 
+    fn debug_launch_arguments(&self, adapter_id: &str, launch: &DebugLaunch) -> Option<String> {
+        (adapter_id == "java").then(|| java_debug_launch_arguments(launch))
+    }
+
     fn project_release(&self, project_root: &Path) -> Option<ProjectRelease> {
         java_release::detect(project_root)
     }
@@ -520,6 +537,32 @@ fn jdtls_restart_key(ctx: &ServerStartContext, debug_bundles: &[String]) -> Stri
         java_home = ctx.runtime_home,
         java_release = ctx.java_release,
     )
+}
+
+/// The `launch` arguments java-debug takes, carrying every field the real
+/// `vscode-java-debug` extension forwards. The classpath is the one the build
+/// tool resolved rather than the `"$Auto"` sentinel the extension supports
+/// for jdt.ls-side resolution: the app resolves it already, so there is no
+/// reason to ask jdt.ls to redo it.
+fn java_debug_launch_arguments(launch: &DebugLaunch) -> String {
+    let env: std::collections::HashMap<&str, &str> =
+        launch.run.env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    serde_json::json!({
+        "type": "java",
+        "request": "launch",
+        "name": launch.name,
+        "mainClass": launch.run.entry_point,
+        "projectName": launch.project_name,
+        "cwd": launch.working_dir.display().to_string(),
+        "classPaths": launch.classpath.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+        "modulePaths": Vec::<String>::new(),
+        "args": launch.run.program_args,
+        "vmArgs": launch.run.vm_args,
+        "env": env,
+        "console": "internalConsole",
+        "stopOnEntry": false,
+    })
+    .to_string()
 }
 
 /// Checks that `java_home` (or auto-detected JVM) satisfies jdt.ls' Java 21

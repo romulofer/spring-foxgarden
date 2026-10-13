@@ -1,4 +1,4 @@
-use fg_extension::{Extension, GrammarSource, Registry};
+use fg_extension::{DebugLaunch, Extension, GrammarSource, Registry};
 
 use super::{detect_major_version_at, java_command, java_major_version, jdk_home_candidates, version_hint, SpringExtension, JAVA, JDK, KOTLIN};
 
@@ -274,4 +274,50 @@ fn java_command_prefers_the_explicit_home_over_java_home_and_path() {
 #[test]
 fn detecting_a_nonexistent_binary_is_an_error_not_a_panic() {
     assert!(detect_major_version_at(std::path::Path::new("/does/not/exist/bin/java")).is_err());
+}
+
+fn debug_launch(entry_point: &str) -> DebugLaunch {
+    DebugLaunch {
+        name: "test".to_string(),
+        project_name: "demo-app".to_string(),
+        run: fg_extension::RunSpec {
+            entry_point: entry_point.to_string(),
+            vm_args: "-Xmx128m".to_string(),
+            program_args: "foo".to_string(),
+            env: vec![("MY_ENV".to_string(), "hello".to_string())],
+            working_dir: None,
+        },
+        working_dir: std::path::PathBuf::from("/projects/demo-app"),
+        classpath: vec![
+            std::path::PathBuf::from("/projects/demo-app/target/classes"),
+            std::path::PathBuf::from("/home/.m2/x.jar"),
+        ],
+    }
+}
+
+#[test]
+fn debug_launch_arguments_carry_every_field_the_real_extension_forwards() {
+    let json = SpringExtension
+        .debug_launch_arguments("java", &debug_launch("com.example.Main"))
+        .expect("java is this extension's adapter");
+    let args: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(args["type"], "java");
+    assert_eq!(args["mainClass"], "com.example.Main");
+    assert_eq!(args["projectName"], "demo-app");
+    assert_eq!(args["cwd"], "/projects/demo-app");
+    assert_eq!(
+        args["classPaths"],
+        serde_json::json!(["/projects/demo-app/target/classes", "/home/.m2/x.jar"])
+    );
+    assert_eq!(args["modulePaths"], serde_json::json!([]));
+    assert_eq!(args["args"], "foo");
+    assert_eq!(args["vmArgs"], "-Xmx128m");
+    assert_eq!(args["env"]["MY_ENV"], "hello");
+    assert_eq!(args["console"], "internalConsole");
+}
+
+#[test]
+fn debug_launch_arguments_are_declined_for_another_adapter() {
+    assert!(SpringExtension.debug_launch_arguments("lldb", &debug_launch("x")).is_none());
 }
