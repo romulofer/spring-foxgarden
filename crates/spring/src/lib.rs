@@ -28,8 +28,8 @@ use std::process::Command;
 
 use fg_extension::{
     AnalyzerFinding, AnalyzerRun, BuildProblem, BuildTask, BuildToolHandle, CodeGeneration, CommandSpec, ConfigProperty, Contributions, CoverageReport,
-    Extension, ExtensionManifest, GrammarContribution, GrammarSource, DocStub, HttpRoute, ImportCandidate, ImportEdit, Snippet, JdkRuntime, LanguageContribution,
-    LanguageId, LanguageServerContribution, MemberView, NodeKinds, ProjectRelease, ReceiverType, ResolvedServerStart,
+    ArchiveKind, Extension, ExtensionManifest, LatestVersionSource, ServerInstall, GrammarContribution, GrammarSource, DocStub, HttpRoute, ImportCandidate, ImportEdit, Snippet, JdkRuntime, LanguageContribution,
+    HostRuntime, LanguageId, LanguageServerContribution, MemberView, NodeKinds, ProjectRelease, ReceiverType, ResolvedServerStart,
     RunSpec, RunTarget, ScaffoldSpec, ServerStartContext, TestCase, TestFailureLocation, TypeDeclaration, TypeFields,
     TypeMember, CURRENT_SCHEMA_VERSION,
 };
@@ -79,11 +79,16 @@ pub const KOTLIN_LANGUAGE_SERVER: &str = "kotlin-language-server";
 /// The JVM jdt.ls itself requires to *run*.
 const JDTLS_MINIMUM_JDK: u32 = 21;
 
-/// `com.microsoft.java.debug.plugin` bytes, vendored from the FoxGarden tree
-/// via the path dependency. Included here so the spring extension is the only
-/// thing that knows this jar exists.
-const JAVA_DEBUG_PLUGIN_JAR: &[u8] =
-    include_bytes!("../../../../foxgarden/vendor/lsp-servers/java-debug-plugin-0.53.2.jar");
+/// The language servers' own release archives and the debug plugin, embedded
+/// at compile time: every build carries a working server, so installing one
+/// never depends on the network, `git`, or a JDK able to build jdt.ls. Git LFS
+/// tracks them (`.gitattributes`), and a clone made without `git-lfs` leaves a
+/// text pointer behind that the app reports at install time.
+const JDTLS_ARCHIVE: &[u8] = include_bytes!("../../../vendor/lsp-servers/jdtls-1.60.0.tar.gz");
+const KOTLIN_LANGUAGE_SERVER_ARCHIVE: &[u8] =
+    include_bytes!("../../../vendor/lsp-servers/kotlin-language-server-1.3.13.zip");
+/// `com.microsoft.java.debug.plugin` bytes.
+const JAVA_DEBUG_PLUGIN_JAR: &[u8] = include_bytes!("../../../vendor/lsp-servers/java-debug-plugin-0.53.2.jar");
 const JAVA_DEBUG_PLUGIN_VERSION: &str = "0.53.2";
 
 /// Java, Kotlin and (eventually) everything Spring.
@@ -135,6 +140,31 @@ impl Extension for SpringExtension {
                     binary_name: String::new(),
                     args: Vec::new(),
                     initialization_options: None,
+                    host_runtime: Some(HostRuntime {
+                        runtime_id: JDK.to_string(),
+                        minimum_major_version: JDTLS_MINIMUM_JDK,
+                        home_label: "Java Home".to_string(),
+                        note: "jdt.ls requires a JDK 21+ to run. Filled in automatically from the newest JDK 21+ \
+                               found on this machine; empty falls back to JAVA_HOME and PATH."
+                            .to_string(),
+                        none_found: "No JDK 21 or newer found on this machine \u{2014} install one, or type its \
+                                     path above. jdt.ls won't start without it."
+                            .to_string(),
+                    }),
+                    // Eclipse publishes no GitHub release artifacts; the
+                    // distribution is the milestone tarball (`bin/jdtls`, a
+                    // Python launcher), so the newest version comes from tags.
+                    install: Some(ServerInstall {
+                        version: "1.60.0".to_string(),
+                        archive: ArchiveKind::TarGz,
+                        launcher: vec!["bin".to_string(), "jdtls".to_string()],
+                        github_repo: "eclipse-jdtls/eclipse.jdt.ls".to_string(),
+                        latest_version_source: LatestVersionSource::Tags,
+                        note: "Bundled with FoxGarden (Eclipse's own prebuilt distribution) — installs instantly, \
+                               no network or build required. Needs a JDK 21+ on PATH or JAVA_HOME to run (jdt.ls' \
+                               own stated minimum)."
+                            .to_string(),
+                    }),
                 },
                 LanguageServerContribution {
                     id: KOTLIN_LANGUAGE_SERVER.to_string(),
@@ -143,6 +173,17 @@ impl Extension for SpringExtension {
                     binary_name: String::new(),
                     args: Vec::new(),
                     initialization_options: None,
+                    host_runtime: None,
+                    install: Some(ServerInstall {
+                        version: "1.3.13".to_string(),
+                        archive: ArchiveKind::Zip,
+                        launcher: vec!["server".to_string(), "bin".to_string(), "kotlin-language-server".to_string()],
+                        github_repo: "fwcd/kotlin-language-server".to_string(),
+                        latest_version_source: LatestVersionSource::Releases,
+                        note: "Bundled with FoxGarden — installs instantly, no network required. Needs a JDK on \
+                               PATH to run."
+                            .to_string(),
+                    }),
                 },
             ],
             build_tools: build_tools::contributions(),
@@ -180,6 +221,25 @@ impl Extension for SpringExtension {
             .into_iter()
             .map(|runtime| jdk_install(runtime.path, runtime.major))
             .collect()
+    }
+
+    fn server_archive(&self, server_id: &str) -> Option<&'static [u8]> {
+        match server_id {
+            JDTLS => Some(JDTLS_ARCHIVE),
+            KOTLIN_LANGUAGE_SERVER => Some(KOTLIN_LANGUAGE_SERVER_ARCHIVE),
+            _ => None,
+        }
+    }
+
+    /// Ambient `JAVA_HOME`/`PATH` only — a soft pre-flight check, not the JVM
+    /// a session later runs under (that honors the Java Home setting).
+    /// Extraction needs no Java; this exists so a missing or too-old JDK
+    /// surfaces at install time in one sentence.
+    fn check_server_prerequisites(&self, server_id: &str) -> Result<(), String> {
+        match server_id {
+            JDTLS => resolve_jdtls_java("").map(|_| ()),
+            _ => Ok(()),
+        }
     }
 
     fn resolve_server_start(&self, server_id: &str, ctx: &ServerStartContext) -> Option<Result<ResolvedServerStart, String>> {
@@ -412,7 +472,7 @@ fn language(id: &str, display_name: &str, extension: &str) -> LanguageContributi
 // jdt.ls startup
 
 fn resolve_jdtls(ctx: &ServerStartContext) -> Result<ResolvedServerStart, String> {
-    let java = resolve_jdtls_java(&ctx.java_home)?;
+    let java = resolve_jdtls_java(&ctx.runtime_home)?;
     let debug_bundles = debug_plugin_bundles();
     let init_opts = jdtls_initialization_options(ctx, &debug_bundles);
     let restart_key = jdtls_restart_key(ctx, &debug_bundles);
@@ -457,7 +517,7 @@ fn jdtls_restart_key(ctx: &ServerStartContext, debug_bundles: &[String]) -> Stri
     format!(
         "{binary}|{java_home}|{java_release:?}|{runtimes_key}|{debug_bundles:?}",
         binary = ctx.configured_binary.trim(),
-        java_home = ctx.java_home,
+        java_home = ctx.runtime_home,
         java_release = ctx.java_release,
     )
 }
@@ -636,9 +696,7 @@ fn xdg_config_root() -> Result<PathBuf, String> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// JDK discovery — background scan, same logic as `lsp_manager` in the main
-// tree. The copy there goes away once the JDK installer panel moves here
-// too (Track 24 Phase 6).
+// JDK discovery — background scan for the language server's runtime list
 
 static INSTALLED_RUNTIMES: std::sync::OnceLock<std::sync::Mutex<Option<Vec<JdkRuntime>>>> =
     std::sync::OnceLock::new();

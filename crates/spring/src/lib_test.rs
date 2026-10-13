@@ -1,6 +1,6 @@
 use fg_extension::{Extension, GrammarSource, Registry};
 
-use super::{SpringExtension, JAVA, JDK, KOTLIN};
+use super::{detect_major_version_at, java_command, java_major_version, jdk_home_candidates, version_hint, SpringExtension, JAVA, JDK, KOTLIN};
 
 fn registry() -> Registry {
     let mut registry = Registry::new();
@@ -168,4 +168,110 @@ mod fake_jdk {
 
         assert_eq!(registry().runtimes()[0].detect(&home).unwrap().major_version, 8);
     }
+}
+
+fn fake_java_home(home: &std::path::Path) {
+    std::fs::create_dir_all(home.join("bin")).unwrap();
+    std::fs::write(home.join("bin").join("java"), b"#!/bin/sh\n").unwrap();
+}
+
+/// Ordering is the whole point of the candidate list: a machine with
+/// several JDKs installed must be offered its newest one, and plain
+/// lexicographic order would rank `java-8` above `java-21`.
+#[test]
+fn jdk_home_candidates_rank_a_search_roots_installs_newest_first() {
+    let root = tempfile::tempdir().unwrap();
+    for name in ["java-8-openjdk", "java-21-openjdk", "java-17-openjdk"] {
+        fake_java_home(&root.path().join(name));
+    }
+
+    let candidates = jdk_home_candidates(None, None, &[root.path().to_path_buf()]);
+
+    let names: Vec<_> = candidates
+        .iter()
+        .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
+        .collect();
+    assert_eq!(names, ["java-21-openjdk", "java-17-openjdk", "java-8-openjdk"]);
+}
+
+/// `JAVA_HOME` and `PATH` are what jdt.ls' own launcher would pick, so
+/// detection agrees with the machine's configured default whenever that
+/// default is new enough — and never offers the same home twice.
+#[test]
+fn jdk_home_candidates_lead_with_java_home_then_path_and_never_repeat_one() {
+    let root = tempfile::tempdir().unwrap();
+    let configured = root.path().join("configured");
+    let on_path = root.path().join("on-path");
+    fake_java_home(&configured);
+    fake_java_home(&on_path);
+
+    let candidates = jdk_home_candidates(
+        Some(configured.clone()),
+        Some(on_path.join("bin").join("java")),
+        // The same two homes again, as a search root would find them.
+        &[root.path().to_path_buf()],
+    );
+
+    assert_eq!(candidates, [configured, on_path]);
+}
+
+/// A directory that isn't a JDK at all can't be a candidate, however
+/// promising its name — `bin/java` has to actually be there.
+#[test]
+fn jdk_home_candidates_skip_a_directory_with_no_java_in_it() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("java-21-not-really")).unwrap();
+    assert!(jdk_home_candidates(None, None, &[root.path().to_path_buf()]).is_empty());
+}
+
+/// macOS ships JDKs as bundles, where the home is `Contents/Home` under
+/// the install directory rather than the directory itself.
+#[test]
+fn jdk_home_candidates_understand_the_macos_bundle_layout() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("temurin-21.jdk").join("Contents").join("Home");
+    fake_java_home(&home);
+
+    assert_eq!(jdk_home_candidates(None, None, &[root.path().to_path_buf()]), [home]);
+}
+
+#[test]
+fn version_hint_reads_the_major_version_out_of_a_jdk_directory_name() {
+    assert_eq!(version_hint("java-21-openjdk-amd64"), 21);
+    assert_eq!(version_hint("21.0.11-zulu"), 21);
+    assert_eq!(version_hint("temurin-17.jdk"), 17);
+    assert_eq!(version_hint("openjdk"), 0);
+}
+
+#[test]
+fn java_major_version_reads_a_modern_jvm_banner() {
+    assert_eq!(java_major_version("openjdk version \"21.0.2\" 2024-01-16 LTS\n"), Some(21));
+    assert_eq!(java_major_version("openjdk version \"17.0.4\" 2022-07-19 LTS"), Some(17));
+}
+
+/// A Java 8 JVM reports `1.8.0_x`, where the major version is the
+/// second component — reading the first would call it "Java 1" and
+/// reject every JVM ever with a confusing message.
+#[test]
+fn java_major_version_reads_a_legacy_jvm_banner() {
+    assert_eq!(java_major_version("java version \"1.8.0_292\""), Some(8));
+}
+
+#[test]
+fn java_major_version_on_unparseable_output_is_none() {
+    assert!(java_major_version("no version here").is_none());
+    assert!(java_major_version("version \"nonsense\"").is_none());
+}
+
+/// Deterministic regardless of this process's own ambient `JAVA_HOME`
+/// (real dev machines commonly have one set, e.g. via SDKMAN) — an
+/// explicit `java_home` always wins over it.
+#[test]
+fn java_command_prefers_the_explicit_home_over_java_home_and_path() {
+    assert_eq!(java_command("/opt/jdk21"), std::path::Path::new("/opt/jdk21/bin/java"));
+}
+
+#[test]
+fn detecting_a_nonexistent_binary_is_an_error_not_a_panic() {
+    assert!(detect_major_version_at(std::path::Path::new("/does/not/exist/bin/java")).is_err());
 }
