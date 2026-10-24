@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use fg_extension::{
-    AnalyzerFinding, AnalyzerRun, BuildProblem, BuildTask, BuildToolHandle, CodeGeneration, CommandSpec, ConfigProperty, Contributions, CoverageReport,
+    AnalyzerFinding, Capability, AnalyzerRun, BuildProblem, BuildTask, BuildToolHandle, CodeGeneration, CommandSpec, ConfigProperty, Contributions, CoverageReport,
     ArchiveKind, Extension, ExtensionManifest, FileIcon, LatestVersionSource, ServerInstall, GrammarContribution, GrammarSource, DocStub, HttpRoute, ImportCandidate, ImportEdit, Snippet, JdkRuntime, LanguageContribution,
     DebugAdapterContribution, DebugLaunch, HostRuntime, LanguageId, LanguageServerContribution, MemberView, NodeKinds, ProjectRelease, ReceiverType, ResolvedServerStart,
     RunSpec, RunTarget, ScaffoldSpec, ServerStartContext, TestCase, TestFailureLocation, TypeDeclaration, TypeFields,
@@ -102,6 +102,12 @@ impl Extension for SpringExtension {
             version: env!("CARGO_PKG_VERSION").to_string(),
             schema_version: CURRENT_SCHEMA_VERSION,
         }
+    }
+
+    fn capabilities(&self) -> Vec<Capability> {
+        // Language servers, Maven/Gradle, the analyzers and the debug adapter
+        // are all external programs; the analyzers install by download.
+        vec![Capability::ProcessExec, Capability::DownloadFile]
     }
 
     fn contributions(&self) -> Contributions {
