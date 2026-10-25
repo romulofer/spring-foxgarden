@@ -260,6 +260,12 @@ pub struct GradleClasspath {
     pub path: String,
     pub compile: Vec<PathBuf>,
     pub runtime: Vec<PathBuf>,
+    /// Where this project's own compiled classes and processed resources land
+    /// (the main source set's output; the JVM target's main compilation for
+    /// Kotlin Multiplatform), which `runtime` leaves out. Empty when the script
+    /// found none, in which case a caller guesses the tool's default directory.
+    #[serde(default)]
+    pub outputs: Vec<PathBuf>,
 }
 
 /// The init script `gradle_classpaths` uses — same `allprojects { }`/
@@ -277,14 +283,35 @@ allprojects {
         doLast {
             def compileCfg = project.configurations.findByName("compileClasspath")
             def runtimeCfg = project.configurations.findByName("runtimeClasspath")
-            if (compileCfg == null && runtimeCfg == null) return
-            if ((compileCfg != null && !compileCfg.canBeResolved) && (runtimeCfg != null && !runtimeCfg.canBeResolved)) return
+            def compileFiles = []
+            def runtimeFiles = []
+            def outputs = []
 
-            def compileFiles = (compileCfg != null && compileCfg.canBeResolved) ? compileCfg.resolve().collect { it.toString() } : []
-            def runtimeFiles = (runtimeCfg != null && runtimeCfg.canBeResolved) ? runtimeCfg.resolve().collect { it.toString() } : []
+            if (compileCfg != null || runtimeCfg != null) {
+                if ((compileCfg != null && !compileCfg.canBeResolved) && (runtimeCfg != null && !runtimeCfg.canBeResolved)) return
+                compileFiles = (compileCfg != null && compileCfg.canBeResolved) ? compileCfg.resolve().collect { it.toString() } : []
+                runtimeFiles = (runtimeCfg != null && runtimeCfg.canBeResolved) ? runtimeCfg.resolve().collect { it.toString() } : []
+                def main = project.extensions.findByName("java")?.sourceSets?.findByName("main")
+                if (main != null) {
+                    outputs.addAll(main.output.classesDirs.files.collect { it.toString() })
+                    if (main.output.resourcesDir != null) outputs.add(main.output.resourcesDir.toString())
+                }
+            } else {
+                // Kotlin Multiplatform has no `runtimeClasspath`: its JVM target
+                // carries the classpath on its main compilation instead.
+                def kotlin = project.extensions.findByName("kotlin")
+                def targets = null
+                try { targets = kotlin?.targets } catch (Exception ignored) {}
+                def jvm = targets?.find { it.platformType.toString() == "jvm" }
+                def main = jvm?.compilations?.findByName("main")
+                if (main == null) return
+                compileFiles = main.compileDependencyFiles.files.collect { it.toString() }
+                runtimeFiles = main.runtimeDependencyFiles.files.collect { it.toString() }
+                outputs = main.output.allOutputs.files.collect { it.toString() }
+            }
 
             println("FOXGARDEN_CP_JSON_BEGIN")
-            println(groovy.json.JsonOutput.toJson([path: project.path, compile: compileFiles, runtime: runtimeFiles]))
+            println(groovy.json.JsonOutput.toJson([path: project.path, compile: compileFiles, runtime: runtimeFiles, outputs: outputs]))
             println("FOXGARDEN_CP_JSON_END")
         }
     }

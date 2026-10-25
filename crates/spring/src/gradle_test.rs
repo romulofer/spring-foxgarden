@@ -198,3 +198,14 @@ fn a_project_with_no_jvm_configurations_at_all_is_simply_absent() {
     // empty dump parses to an empty list rather than an error.
     assert!(parse_classpath_output("").unwrap().is_empty());
 }
+
+#[test]
+fn a_reply_with_outputs_carries_them_and_an_older_one_without_has_none() {
+    let with = "FOXGARDEN_CP_JSON_BEGIN\n{\"path\":\":\",\"compile\":[],\"runtime\":[\"/d.jar\"],\"outputs\":[\"/p/build/classes/kotlin/jvm/main\",\"/p/build/processedResources/jvm/main\"]}\nFOXGARDEN_CP_JSON_END\n";
+    let parsed = parse_classpath_output(with).unwrap();
+    assert_eq!(
+        parsed[0].outputs,
+        vec![PathBuf::from("/p/build/classes/kotlin/jvm/main"), PathBuf::from("/p/build/processedResources/jvm/main")]
+    );
+    assert!(parse_classpath_output(REAL_CLASSPATH_OUTPUT).unwrap()[0].outputs.is_empty());
+}

@@ -53,8 +53,11 @@ pub fn runtime_classpath(tool_id: &str, project_root: &Path) -> Option<Result<Ve
                         .ok_or_else(|| "no root Gradle module with a resolvable classpath".to_string())
                 })
                 .map(|root| {
-                    let mut cp = root.runtime;
-                    cp.insert(0, classes);
+                    // The build's own answer for where its classes went; the
+                    // default directory is only a guess for an older script
+                    // reply that carried none.
+                    let mut cp = if root.outputs.is_empty() { vec![classes] } else { root.outputs };
+                    cp.extend(root.runtime);
                     cp
                 }),
         ),

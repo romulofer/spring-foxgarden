@@ -175,3 +175,33 @@ fn points_each_tool_at_its_own_compiled_output_directory() {
         root.join("build").join("classes").join("java").join("main")
     );
 }
+
+fn gradle_project(build_file: &str) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("build.gradle.kts"), build_file).unwrap();
+    dir
+}
+
+fn gradle_compile_args(dir: &tempfile::TempDir) -> Vec<String> {
+    command(GRADLE, dir.path(), BuildTask::Compile).unwrap().args
+}
+
+#[test]
+fn a_plain_gradle_project_compiles_with_compile_java() {
+    let dir = gradle_project("plugins { kotlin(\"jvm\") version \"2.4.0\" }\n");
+    assert_eq!(gradle_compile_args(&dir), ["--console=plain", "compileJava"]);
+}
+
+#[test]
+fn a_multiplatform_module_with_a_jvm_target_compiles_through_its_jvm_classes_task() {
+    for target in ["    jvm()", "    jvm(\"desktop\")", "    jvm {", "kotlin { jvm(); iosArm64() }"] {
+        let dir = gradle_project(&format!("plugins {{ kotlin(\"multiplatform\") }}\nkotlin {{\n{target}\n}}\n"));
+        assert_eq!(gradle_compile_args(&dir), ["--console=plain", "jvmMainClasses"], "{target}");
+    }
+}
+
+#[test]
+fn a_multiplatform_module_without_a_jvm_target_keeps_the_default() {
+    let dir = gradle_project("plugins { kotlin(\"multiplatform\") }\nkotlin {\n    jvmToolchain(21)\n    iosArm64()\n}\n");
+    assert_eq!(gradle_compile_args(&dir), ["--console=plain", "compileJava"]);
+}

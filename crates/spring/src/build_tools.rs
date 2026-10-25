@@ -107,7 +107,7 @@ pub fn command(tool_id: &str, project_root: &Path, task: BuildTask) -> Option<Co
         (GRADLE, BuildTask::Compile) => Some(
             CommandSpec::new(gradle_program(project_root), project_root)
                 .arg("--console=plain")
-                .arg("compileJava"),
+                .arg(gradle_compile_task(project_root)),
         ),
         (GRADLE, BuildTask::Test) => Some(
             CommandSpec::new(gradle_program(project_root), project_root)
@@ -116,6 +116,29 @@ pub fn command(tool_id: &str, project_root: &Path, task: BuildTask) -> Option<Co
         ),
         _ => None,
     }
+}
+
+/// The Gradle task that compiles the main code: `compileJava`, except in a
+/// Kotlin Multiplatform module with a JVM target, which has no such task
+/// (`compileJava` is ambiguous there) and compiles through `jvmMainClasses`.
+fn gradle_compile_task(project_root: &Path) -> &'static str {
+    let build_file = ["build.gradle.kts", "build.gradle"]
+        .iter()
+        .find_map(|name| std::fs::read_to_string(project_root.join(name)).ok())
+        .unwrap_or_default();
+    let code: Vec<&str> = build_file.lines().map(str::trim).filter(|line| !line.starts_with("//")).collect();
+    let multiplatform = code.iter().any(|line| line.contains("multiplatform"));
+    let jvm_target = code.iter().any(|line| declares_jvm_target(line));
+    if multiplatform && jvm_target { "jvmMainClasses" } else { "compileJava" }
+}
+
+/// Whether `line` calls the `jvm` target function (`jvm()`, `jvm("desktop")`,
+/// `jvm { }`), not `jvmToolchain(...)` or a name that merely ends in `jvm`.
+fn declares_jvm_target(line: &str) -> bool {
+    line.match_indices("jvm").any(|(at, _)| {
+        let before_ok = line[..at].chars().next_back().is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == '.'));
+        before_ok && line[at + 3..].trim_start().starts_with(['(', '{'])
+    })
 }
 
 /// Each tool's own default compiled-classes output directory. Not verified to
