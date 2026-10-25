@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use fg_extension::{CommandSpec, RunSpec};
 
 use crate::build_tools::{classes_dir, GRADLE, MAVEN};
-use crate::gradle::gradle_classpaths;
+use crate::gradle::{gradle_classpaths, GradleClasspath};
 use crate::maven::maven_classpath;
 
 /// Resolves `tool_id`'s own real classpath for `project_root` — every jar plus
@@ -41,28 +41,34 @@ pub fn runtime_classpath(tool_id: &str, project_root: &Path) -> Option<Result<Ve
         GRADLE => Some(
             gradle_classpaths(project_root)
                 .map_err(|e| e.to_string())
-                .and_then(|classpaths| {
-                    // No root project (`path == ":"`) with a resolvable
-                    // classpath at all, e.g. a pure multi-module aggregator
-                    // with no Java plugin applied at its own root. Run only
-                    // supports the single-root-project shape, matching what
-                    // marker-file detection itself scopes to.
-                    classpaths
-                        .into_iter()
-                        .find(|c| c.path == ":")
-                        .ok_or_else(|| "no root Gradle module with a resolvable classpath".to_string())
-                })
-                .map(|root| {
-                    // The build's own answer for where its classes went; the
-                    // default directory is only a guess for an older script
-                    // reply that carried none.
-                    let mut cp = if root.outputs.is_empty() { vec![classes] } else { root.outputs };
-                    cp.extend(root.runtime);
-                    cp
-                }),
+                .and_then(|classpaths| gradle_run_classpath(classpaths, classes)),
         ),
         _ => None,
     }
+}
+
+/// The classpath a run of a Gradle build uses. The root project's own when it
+/// has a resolvable one. A build whose root applies no JVM plugin (the usual
+/// Kotlin Multiplatform layout, with `:shared` and `:composeApp` below an empty
+/// root) has none, so the classes and dependencies of every module are joined:
+/// the entry point lives in one of them, and the launch does not say which.
+fn gradle_run_classpath(classpaths: Vec<GradleClasspath>, default_classes: PathBuf) -> Result<Vec<PathBuf>, String> {
+    // The build's own answer for where its classes went; the default directory
+    // is only a guess for a script reply that carried none.
+    let (outputs, runtime): (Vec<PathBuf>, Vec<PathBuf>) = match classpaths.iter().position(|c| c.path == ":") {
+        Some(root) => {
+            let root = classpaths.into_iter().nth(root).expect("position found it");
+            let outputs = if root.outputs.is_empty() { vec![default_classes] } else { root.outputs };
+            (outputs, root.runtime)
+        }
+        None if classpaths.is_empty() => return Err("no Gradle module with a resolvable classpath".to_string()),
+        None => (
+            classpaths.iter().flat_map(|c| c.outputs.iter().cloned()).collect(),
+            classpaths.iter().flat_map(|c| c.runtime.iter().cloned()).collect(),
+        ),
+    };
+    let mut seen = std::collections::HashSet::new();
+    Ok(outputs.into_iter().chain(runtime).filter(|entry| seen.insert(entry.clone())).collect())
 }
 
 /// A best-effort classpath for metadata scanning: a plain single-module

@@ -119,17 +119,44 @@ pub fn command(tool_id: &str, project_root: &Path, task: BuildTask) -> Option<Co
 }
 
 /// The Gradle task that compiles the main code: `compileJava`, except in a
-/// Kotlin Multiplatform module with a JVM target, which has no such task
-/// (`compileJava` is ambiguous there) and compiles through `jvmMainClasses`.
+/// build with a Kotlin Multiplatform module that has a JVM target, which has no
+/// such task (`compileJava` is ambiguous there) and compiles through
+/// `jvmMainClasses`. Selected by name from the root, that task runs in every
+/// module that has it, so a root applying no plugin over `:shared` and
+/// `:composeApp` compiles both.
 fn gradle_compile_task(project_root: &Path) -> &'static str {
+    if multiplatform_jvm_module_below(project_root, 0) { "jvmMainClasses" } else { "compileJava" }
+}
+
+/// How far below the root a Gradle module is looked for, as in `:libs:core`.
+const MODULE_SEARCH_DEPTH: usize = 2;
+
+/// Directories that are never modules.
+const NOT_MODULES: [&str; 7] = [".git", ".gradle", ".idea", "build", "node_modules", "out", "target"];
+
+/// Whether `dir`, or a module below it, applies the multiplatform plugin and
+/// declares a JVM target.
+fn multiplatform_jvm_module_below(dir: &Path, depth: usize) -> bool {
+    if is_multiplatform_jvm_build(dir) {
+        return true;
+    }
+    if depth == MODULE_SEARCH_DEPTH {
+        return false;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else { return false };
+    entries.flatten().map(|entry| entry.path()).filter(|path| path.is_dir()).any(|path| {
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        !name.starts_with('.') && !NOT_MODULES.contains(&name) && multiplatform_jvm_module_below(&path, depth + 1)
+    })
+}
+
+fn is_multiplatform_jvm_build(dir: &Path) -> bool {
     let build_file = ["build.gradle.kts", "build.gradle"]
         .iter()
-        .find_map(|name| std::fs::read_to_string(project_root.join(name)).ok())
+        .find_map(|name| std::fs::read_to_string(dir.join(name)).ok())
         .unwrap_or_default();
     let code: Vec<&str> = build_file.lines().map(str::trim).filter(|line| !line.starts_with("//")).collect();
-    let multiplatform = code.iter().any(|line| line.contains("multiplatform"));
-    let jvm_target = code.iter().any(|line| declares_jvm_target(line));
-    if multiplatform && jvm_target { "jvmMainClasses" } else { "compileJava" }
+    code.iter().any(|line| line.contains("multiplatform")) && code.iter().any(|line| declares_jvm_target(line))
 }
 
 /// Whether `line` calls the `jvm` target function (`jvm()`, `jvm("desktop")`,

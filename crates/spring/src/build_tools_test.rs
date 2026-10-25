@@ -205,3 +205,25 @@ fn a_multiplatform_module_without_a_jvm_target_keeps_the_default() {
     let dir = gradle_project("plugins { kotlin(\"multiplatform\") }\nkotlin {\n    jvmToolchain(21)\n    iosArm64()\n}\n");
     assert_eq!(gradle_compile_args(&dir), ["--console=plain", "compileJava"]);
 }
+
+#[test]
+fn an_empty_root_over_multiplatform_modules_compiles_through_their_jvm_classes_task() {
+    let dir = gradle_project("plugins { kotlin(\"multiplatform\") apply false }\n");
+    for module in ["shared", "composeApp"] {
+        std::fs::create_dir_all(dir.path().join(module)).unwrap();
+        std::fs::write(
+            dir.path().join(module).join("build.gradle.kts"),
+            "plugins { kotlin(\"multiplatform\") }\nkotlin {\n    jvm()\n}\n",
+        )
+        .unwrap();
+    }
+    assert_eq!(gradle_compile_args(&dir), ["--console=plain", "jvmMainClasses"]);
+}
+
+#[test]
+fn a_build_directory_is_not_searched_for_modules() {
+    let dir = gradle_project("plugins { java }\n");
+    std::fs::create_dir_all(dir.path().join("build")).unwrap();
+    std::fs::write(dir.path().join("build/build.gradle.kts"), "plugins { kotlin(\"multiplatform\") }\nkotlin { jvm() }\n").unwrap();
+    assert_eq!(gradle_compile_args(&dir), ["--console=plain", "compileJava"]);
+}

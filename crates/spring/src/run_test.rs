@@ -57,3 +57,49 @@ fn a_build_tool_this_extension_does_not_own_has_no_launch_and_no_classpath() {
     assert!(runtime_classpath("bazel", root).is_none());
     assert!(analysis_classpath("bazel", root).is_empty());
 }
+
+fn module(path: &str, outputs: &[&str], runtime: &[&str]) -> GradleClasspath {
+    GradleClasspath {
+        path: path.to_string(),
+        compile: Vec::new(),
+        runtime: runtime.iter().map(PathBuf::from).collect(),
+        outputs: outputs.iter().map(PathBuf::from).collect(),
+    }
+}
+
+#[test]
+fn a_root_module_with_a_classpath_is_the_run_classpath() {
+    let classpath = gradle_run_classpath(
+        vec![module(":sub", &["/sub/out"], &["/sub.jar"]), module(":", &["/root/out"], &["/root.jar"])],
+        PathBuf::from("/default"),
+    )
+    .unwrap();
+    assert_eq!(classpath, [PathBuf::from("/root/out"), PathBuf::from("/root.jar")]);
+}
+
+#[test]
+fn a_root_reporting_no_outputs_falls_back_to_the_default_classes_directory() {
+    let classpath = gradle_run_classpath(vec![module(":", &[], &["/root.jar"])], PathBuf::from("/default")).unwrap();
+    assert_eq!(classpath, [PathBuf::from("/default"), PathBuf::from("/root.jar")]);
+}
+
+#[test]
+fn without_a_root_module_every_modules_classes_come_first_and_shared_jars_once() {
+    let classpath = gradle_run_classpath(
+        vec![
+            module(":shared", &["/shared/out"], &["/kotlin-stdlib.jar"]),
+            module(":composeApp", &["/app/out"], &["/kotlin-stdlib.jar", "/lib.jar"]),
+        ],
+        PathBuf::from("/default"),
+    )
+    .unwrap();
+    assert_eq!(
+        classpath,
+        ["/shared/out", "/app/out", "/kotlin-stdlib.jar", "/lib.jar"].map(PathBuf::from)
+    );
+}
+
+#[test]
+fn a_build_with_no_resolvable_module_has_no_run_classpath() {
+    assert!(gradle_run_classpath(Vec::new(), PathBuf::from("/default")).is_err());
+}
