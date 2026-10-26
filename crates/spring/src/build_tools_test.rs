@@ -227,3 +227,49 @@ fn a_build_directory_is_not_searched_for_modules() {
     std::fs::write(dir.path().join("build/build.gradle.kts"), "plugins { kotlin(\"multiplatform\") }\nkotlin { jvm() }\n").unwrap();
     assert_eq!(gradle_compile_args(&dir), ["--console=plain", "compileJava"]);
 }
+
+#[test]
+fn maven_runs_one_test_through_surefires_filter() {
+    let dir = tempfile::tempdir().unwrap();
+    let one = test_command(MAVEN, dir.path(), "com.example.CalcTest#adds").unwrap();
+    assert_eq!(
+        one.args,
+        [
+            "-B",
+            "-Dtest=com.example.CalcTest#adds",
+            "-Dsurefire.failIfNoSpecifiedTests=false",
+            "-DfailIfNoSpecifiedTests=false",
+            "test"
+        ]
+    );
+    assert_eq!(one.cwd, dir.path());
+    let spaced = test_command(MAVEN, dir.path(), "com.example.CalcTest#subtracts two").unwrap();
+    assert_eq!(spaced.args[1], "-Dtest=com.example.CalcTest#subtracts*two");
+}
+
+#[test]
+fn gradle_writes_the_method_after_a_dot() {
+    let dir = tempfile::tempdir().unwrap();
+    let one = test_command(GRADLE, dir.path(), "com.example.CalcTest#adds").unwrap();
+    assert_eq!(one.args, ["--console=plain", "test", "--tests", "com.example.CalcTest.adds"]);
+    let class = test_command(GRADLE, dir.path(), "com.example.CalcTest").unwrap();
+    assert_eq!(class.args[3], "com.example.CalcTest");
+}
+
+#[test]
+fn gradle_uses_jvm_test_where_a_multiplatform_module_has_no_test_task() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("build.gradle.kts"),
+        "plugins { kotlin(\"multiplatform\") }\nkotlin { jvm() }\n",
+    )
+    .unwrap();
+    let one = test_command(GRADLE, dir.path(), "a.B#c").unwrap();
+    assert_eq!(one.args[1], "jvmTest");
+}
+
+#[test]
+fn a_filtered_test_run_is_not_offered_for_a_tool_it_does_not_own() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(test_command("bazel", dir.path(), "a.B").is_none());
+}

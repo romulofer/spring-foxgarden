@@ -56,6 +56,7 @@ pub mod maven;
 mod methods;
 mod snippets;
 pub mod run;
+pub mod test_entry;
 pub mod test_report;
 mod xml;
 
@@ -285,6 +286,10 @@ impl Extension for SpringExtension {
         build_tools::command(tool_id, project_root, task)
     }
 
+    fn test_command(&self, tool_id: &str, project_root: &Path, filter: &str) -> Option<CommandSpec> {
+        build_tools::test_command(tool_id, project_root, filter)
+    }
+
     fn run_command(&self, tool_id: &str, project_root: &Path, run: &RunSpec) -> Option<Result<CommandSpec, String>> {
         run::command(tool_id, project_root, run)
     }
@@ -340,7 +345,9 @@ impl Extension for SpringExtension {
         source: &str,
         file_stem: &str,
     ) -> Vec<RunTarget> {
-        main_entry::main_entries(tree, source, language_id, file_stem)
+        let mut targets = main_entry::main_entries(tree, source, language_id, file_stem);
+        targets.extend(test_entry::test_targets(tree, source, language_id));
+        targets
     }
 
     fn http_routes(&self, language_id: &str, tree: &tree_sitter::Tree, source: &str) -> Vec<HttpRoute> {

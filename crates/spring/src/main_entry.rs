@@ -11,7 +11,7 @@
 //! declaration match the `main` signature" is a question the syntax tree
 //! can answer completely on its own.
 
-use fg_extension::RunTarget;
+use fg_extension::{RunKind, RunTarget};
 use tree_sitter::{Node, Tree};
 
 use crate::{JAVA, KOTLIN};
@@ -36,7 +36,7 @@ pub fn main_entries(tree: &Tree, source: &str, language_id: &str, file_stem: &st
 /// Both grammars name the node differently (`package_declaration` in Java,
 /// `package_header` in Kotlin) but agree on the shape: the last named child
 /// is the dotted name.
-fn package_name(tree: &Tree, source: &str, kind: &str) -> Option<String> {
+pub(crate) fn package_name(tree: &Tree, source: &str, kind: &str) -> Option<String> {
     let root = tree.root_node();
     let mut cursor = root.walk();
     let declaration = root.named_children(&mut cursor).find(|child| child.kind() == kind)?;
@@ -46,7 +46,7 @@ fn package_name(tree: &Tree, source: &str, kind: &str) -> Option<String> {
     (!text.is_empty()).then(|| text.to_string())
 }
 
-fn qualified(package: Option<&String>, class: &str) -> String {
+pub(crate) fn qualified(package: Option<&String>, class: &str) -> String {
     match package {
         Some(package) => format!("{package}.{class}"),
         None => class.to_string(),
@@ -99,7 +99,7 @@ fn is_java_main(node: Node, source: &str) -> bool {
 /// expects on its command line. `None` when the declaration has no
 /// enclosing named type at all (a `main` in an anonymous class or a stray
 /// fragment), since there's then nothing runnable to name.
-fn enclosing_type_chain(node: Node, source: &str, kinds: &[&str]) -> Option<String> {
+pub(crate) fn enclosing_type_chain(node: Node, source: &str, kinds: &[&str]) -> Option<String> {
     let mut names = Vec::new();
     let mut current = node.parent();
     while let Some(parent) = current {
@@ -142,6 +142,7 @@ fn java_main_entries(tree: &Tree, source: &str) -> Vec<RunTarget> {
         let label = class.rsplit('$').next().unwrap_or(&class).to_string();
         out.push(RunTarget {
             line: node.start_position().row,
+            kind: RunKind::Main,
             entry_point: qualified(package.as_ref(), &class),
             label,
         });
@@ -163,6 +164,7 @@ fn kotlin_main_entries(tree: &Tree, source: &str, file_stem: &str) -> Vec<RunTar
         .filter(|node| node.child_by_field_name("name").map(|n| &source[n.byte_range()]) == Some("main"))
         .map(|node| RunTarget {
             line: node.start_position().row,
+            kind: RunKind::Main,
             entry_point: qualified(package.as_ref(), &class),
             label: class.clone(),
         })
@@ -193,7 +195,7 @@ fn kotlin_file_class_name(file_stem: &str) -> String {
 /// Pre-order walk over every named node, calling `visit` on each. Kept
 /// local rather than a shared helper: `methods`/`fields` each walk with
 /// their own early-exit rules, and this one has none to share.
-fn walk(node: Node, visit: &mut impl FnMut(Node)) {
+pub(crate) fn walk(node: Node, visit: &mut impl FnMut(Node)) {
     visit(node);
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {

@@ -118,6 +118,40 @@ pub fn command(tool_id: &str, project_root: &Path, task: BuildTask) -> Option<Co
     }
 }
 
+/// The process running only the tests `filter` names — `pkg.Class`, or
+/// `pkg.Class#method` for one — through the same wrapper the whole-project
+/// test task uses. `None` for a tool this extension does not own.
+///
+/// Maven's `-Dtest` takes `Class#method`, and Surefire is told not to fail
+/// where a module has no match, since a multi-module run only matches in one of
+/// them. Gradle's `--tests` writes the method after a dot, and a build with a
+/// Kotlin Multiplatform JVM target has `jvmTest` where others have `test`.
+pub fn test_command(tool_id: &str, project_root: &Path, filter: &str) -> Option<CommandSpec> {
+    match tool_id {
+        // Surefire's method patterns have no room for the spaces of a Kotlin
+        // backtick name, and take `*` for any run of characters.
+        MAVEN => Some(
+            CommandSpec::new(maven_program(project_root), project_root)
+                .arg("-B")
+                .arg(format!("-Dtest={}", filter.replace(' ', "*")))
+                .arg("-Dsurefire.failIfNoSpecifiedTests=false")
+                .arg("-DfailIfNoSpecifiedTests=false")
+                .arg("test"),
+        ),
+        GRADLE => {
+            let task = if multiplatform_jvm_module_below(project_root, 0) { "jvmTest" } else { "test" };
+            Some(
+                CommandSpec::new(gradle_program(project_root), project_root)
+                    .arg("--console=plain")
+                    .arg(task)
+                    .arg("--tests")
+                    .arg(filter.replace('#', ".")),
+            )
+        }
+        _ => None,
+    }
+}
+
 /// The Gradle task that compiles the main code: `compileJava`, except in a
 /// build with a Kotlin Multiplatform module that has a JVM target, which has no
 /// such task (`compileJava` is ambiguous there) and compiles through

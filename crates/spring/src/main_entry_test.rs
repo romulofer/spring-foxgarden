@@ -32,6 +32,7 @@ fn a_plain_java_main_is_found_with_its_package() {
     assert_eq!(
         entries,
         vec![RunTarget {
+            kind: RunKind::Main,
             line: 3,
             entry_point: "com.example.Main".to_string(),
             label: "Main".to_string(),
@@ -83,6 +84,7 @@ fn a_kotlin_top_level_main_compiles_into_the_files_own_class() {
     assert_eq!(
         entries,
         vec![RunTarget {
+            kind: RunKind::Main,
             line: 2,
             entry_point: "com.example.AppKt".to_string(),
             label: "AppKt".to_string(),
