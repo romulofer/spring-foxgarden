@@ -343,9 +343,10 @@ impl Extension for SpringExtension {
         language_id: &str,
         tree: &tree_sitter::Tree,
         source: &str,
-        file_stem: &str,
+        file: &Path,
     ) -> Vec<RunTarget> {
-        let mut targets = main_entry::main_entries(tree, source, language_id, file_stem);
+        let file_stem = file.file_stem().map(|s| s.to_string_lossy()).unwrap_or_default();
+        let mut targets = main_entry::main_entries(tree, source, language_id, &file_stem);
         targets.extend(test_entry::test_targets(tree, source, language_id));
         targets
     }
