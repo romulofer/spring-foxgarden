@@ -34,9 +34,9 @@ impl Extension for SpringExtension {
 | Languages | `java` (`.java`), `kotlin` (`.kt`) |
 | Grammars | `tree-sitter-java`, `tree-sitter-kotlin-ng`, both compiled in, with their highlight queries (`queries/`) and node-kind vocabularies |
 | Language servers | jdt.ls and `kotlin-language-server`: descriptions, `initializationOptions`, JDK discovery, launcher resolution |
-| Build tools | Maven and Gradle: detection, build/test/coverage commands, classpaths, compiler-output parsing, JUnit and JaCoCo report reading |
+| Build tools | Maven and Gradle: detection, build/test/coverage commands, classpaths, compiler-output parsing, JUnit and JaCoCo report reading (the project root and its subprojects, two levels deep), and failure jumps to Java and Kotlin test sources |
 | Scaffolds | New Maven/Gradle projects in Java or Kotlin |
-| Run and debug | Run markers (`main` entry points), debug support for Java |
+| Run and debug | Run markers on `main` entry points, and on JUnit/TestNG test classes and `@Test`-style methods (Java and Kotlin; nested classes as `Outer$Inner`); a marker's single test or class runs through Maven's `-Dtest` or Gradle's `--tests` (`jvmTest` in a multiplatform module). Debug support for Java |
 | Type model | Enclosing type, supertype, members, receiver resolution (dot-completion), and code generation: accessors, constructor, `toString`, `equals`/`hashCode`, overrides |
 | Imports | Spring annotation candidates after `@` and the `import` edit that makes one resolve |
 | Doc comments | Javadoc and KDoc skeletons (`@param`, `@return`, `@throws`, type parameters) |
