@@ -25,6 +25,8 @@ pub fn contributions() -> Vec<ScaffoldContribution> {
             [JAVA, KOTLIN].into_iter().map(move |language| ScaffoldContribution {
                 build_tool_id: tool.to_string(),
                 language_id: LanguageId::from(language),
+                template_id: String::new(),
+                template_name: String::new(),
                 runtime_versions: JAVA_RELEASES.to_vec(),
             })
         })
@@ -290,6 +292,11 @@ repositories {{
 /// to test exactly (`write_scaffold` is the only function that touches
 /// disk).
 pub fn scaffold_files(spec: &ScaffoldSpec) -> Option<Vec<(PathBuf, String)>> {
+    // Every project kind here is the pair's ordinary one; a template is
+    // another extension's.
+    if !spec.template_id.is_empty() {
+        return None;
+    }
     let package_dir: PathBuf = package_path_components(&spec.namespace).into_iter().collect();
     // Source root and entry-point file follow the language, the same
     // `src/main/<lang>` convention Maven and Gradle both use.

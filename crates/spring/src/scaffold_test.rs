@@ -9,6 +9,7 @@ fn sample() -> ScaffoldSpec {
         runtime_version: Some(17),
         build_tool_id: MAVEN.to_string(),
         language_id: JAVA.to_string(),
+        ..Default::default()
     }
 }
 
@@ -292,4 +293,13 @@ fn kotlin_single_segment_group_id_still_produces_a_valid_package_path_and_main_c
     assert_eq!(files[2].0, Path::new("src/main/kotlin/app/Main.kt"));
     assert!(files[2].1.starts_with("package app\n\n"));
     assert!(files[1].1.contains(r#"mainClass = "app.MainKt""#));
+}
+
+#[test]
+fn a_template_of_another_extension_is_not_scaffolded_here() {
+    let spec = ScaffoldSpec {
+        template_id: "multiplatform".to_string(),
+        ..gradle_sample()
+    };
+    assert!(scaffold_files(&spec).is_none());
 }
