@@ -98,3 +98,73 @@ fn test_source_file_is_none_when_the_file_does_not_exist() {
     let dir = tempfile::tempdir().unwrap();
     assert_eq!(test_source_file(dir.path(), "com.example.CalcTest"), None);
 }
+
+#[test]
+fn test_source_file_finds_a_kotlin_test_class() {
+    let dir = tempfile::tempdir().unwrap();
+    let test_dir = dir.path().join("src/test/kotlin/com/example");
+    std::fs::create_dir_all(&test_dir).unwrap();
+    std::fs::write(test_dir.join("CalcTest.kt"), "").unwrap();
+    assert_eq!(
+        test_source_file(dir.path(), "com.example.CalcTest"),
+        Some(test_dir.join("CalcTest.kt"))
+    );
+}
+
+#[test]
+fn test_source_file_resolves_a_nested_class_to_its_outer_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let test_dir = dir.path().join("src/test/java/com/example");
+    std::fs::create_dir_all(&test_dir).unwrap();
+    std::fs::write(test_dir.join("CalcTest.java"), "").unwrap();
+    assert_eq!(
+        test_source_file(dir.path(), "com.example.CalcTest$Nested"),
+        Some(test_dir.join("CalcTest.java"))
+    );
+}
+
+#[test]
+fn failure_line_reads_a_kotlin_frame() {
+    let detail = "org.opentest4j.AssertionFailedError: expected: <99> but was: <5>\n\tat org.junit.jupiter.api.Assertions.assertEquals(Assertions.java:531)\n\tat com.example.CalcTest.addIsBroken(CalcTest.kt:21)\n";
+    assert_eq!(failure_line(detail, "com.example.CalcTest"), Some(21));
+}
+
+#[test]
+fn a_multi_module_build_is_scanned_module_by_module() {
+    let dir = tempfile::tempdir().unwrap();
+    let report = |module: &str, class: &str| {
+        let reports = dir.path().join(module).join("build/test-results/test");
+        std::fs::create_dir_all(&reports).unwrap();
+        std::fs::write(
+            reports.join(format!("TEST-{class}.xml")),
+            format!("<testsuite><testcase name=\"works()\" classname=\"{class}\"/></testsuite>"),
+        )
+        .unwrap();
+    };
+    report("core", "com.example.CoreTest");
+    report("libs/util", "com.example.UtilTest");
+    let mut names: Vec<String> = scan_test_reports(GRADLE, dir.path()).into_iter().map(|c| c.classname).collect();
+    names.sort();
+    assert_eq!(names, ["com.example.CoreTest", "com.example.UtilTest"]);
+}
+
+#[test]
+fn a_test_class_is_found_in_the_module_that_holds_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let test_dir = dir.path().join("core/src/test/kotlin/com/example");
+    std::fs::create_dir_all(&test_dir).unwrap();
+    std::fs::write(test_dir.join("CoreTest.kt"), "").unwrap();
+    assert_eq!(
+        test_source_file(dir.path(), "com.example.CoreTest"),
+        Some(test_dir.join("CoreTest.kt"))
+    );
+}
+
+#[test]
+fn build_output_is_not_searched_for_modules() {
+    let dir = tempfile::tempdir().unwrap();
+    let stale = dir.path().join("build/classes/src/test/java/com/example");
+    std::fs::create_dir_all(&stale).unwrap();
+    std::fs::write(stale.join("CalcTest.java"), "").unwrap();
+    assert_eq!(test_source_file(dir.path(), "com.example.CalcTest"), None);
+}

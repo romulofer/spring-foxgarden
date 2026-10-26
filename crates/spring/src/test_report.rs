@@ -41,6 +41,42 @@ fn test_report_dir(tool_id: &str, project_root: &Path) -> Option<PathBuf> {
     }
 }
 
+/// Directories a module is not looked for in.
+const SKIPPED_DIRS: [&str; 6] = ["build", "target", "node_modules", "out", "bin", "src"];
+
+/// How far below the project root a subproject is looked for: `app`, then
+/// `libs/core`-style layouts.
+const MODULE_DEPTH: usize = 2;
+
+/// `project_root` and the subproject directories below it, root first. A
+/// multi-module build keeps each module's reports and test sources in its own
+/// directory, so both are looked for in every one of these.
+fn module_dirs(project_root: &Path) -> Vec<PathBuf> {
+    let mut found = vec![project_root.to_path_buf()];
+    let mut level = vec![project_root.to_path_buf()];
+    for _ in 0..MODULE_DEPTH {
+        let mut next = Vec::new();
+        for dir in &level {
+            let Ok(entries) = std::fs::read_dir(dir) else { continue };
+            let mut children: Vec<PathBuf> = entries
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.is_dir()
+                        && p.file_name()
+                            .and_then(|n| n.to_str())
+                            .is_some_and(|n| !n.starts_with('.') && !SKIPPED_DIRS.contains(&n))
+                })
+                .collect();
+            children.sort();
+            next.extend(children);
+        }
+        found.extend(next.iter().cloned());
+        level = next;
+    }
+    found
+}
+
 /// Reads and parses every `TEST-*.xml` report `tool`'s own last test run
 /// left behind. A report that can't be read or fails to parse is silently
 /// skipped rather than failing the whole scan — a leftover file from a
@@ -48,26 +84,28 @@ fn test_report_dir(tool_id: &str, project_root: &Path) -> Option<PathBuf> {
 /// results. Empty (no reports directory at all, e.g. the test task never
 /// ran) degrades to an empty `Vec`, not an error.
 pub fn scan_test_reports(tool_id: &str, project_root: &Path) -> Vec<TestCase> {
-    let Some(dir) = test_report_dir(tool_id, project_root) else {
-        return Vec::new();
-    };
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return Vec::new();
-    };
     let mut cases = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let is_report = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n.starts_with("TEST-") && n.ends_with(".xml"));
-        if !is_report {
+    for module in module_dirs(project_root) {
+        let Some(dir) = test_report_dir(tool_id, &module) else {
+            return Vec::new();
+        };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
-        }
-        if let Ok(xml) = std::fs::read_to_string(&path)
-            && let Ok(mut parsed) = parse_junit_xml(&xml)
-        {
-            cases.append(&mut parsed);
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_report = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("TEST-") && n.ends_with(".xml"));
+            if !is_report {
+                continue;
+            }
+            if let Ok(xml) = std::fs::read_to_string(&path)
+                && let Ok(mut parsed) = parse_junit_xml(&xml)
+            {
+                cases.append(&mut parsed);
+            }
         }
     }
     cases
@@ -167,25 +205,31 @@ fn strip_parens(name: &str) -> String {
     name.strip_suffix("()").unwrap_or(name).to_string()
 }
 
+/// Source languages a test class can be written in, as `(source directory,
+/// file extension)`. A Kotlin class may sit under `src/test/java` and a Java
+/// one under `src/test/kotlin`, so every pairing is tried.
+const TEST_SOURCES: [(&str, &str); 4] = [("java", "java"), ("kotlin", "kt"), ("kotlin", "java"), ("java", "kt")];
+
 /// The most likely source file for `classname`'s own test — standard
-/// Maven/Gradle layout (`src/test/java/<package/path>/<ClassName>.java`),
-/// the convention both tools' own scaffolding uses. `None` when that exact file
-/// doesn't exist rather than guessing further (a nonstandard source layout,
-/// or a generated/kotlin test class) — the caller shows the pass/fail
-/// summary regardless, just without a click-to-jump for that one row.
+/// Maven/Gradle layout (`src/test/java/<package/path>/<ClassName>.java`, or
+/// `src/test/kotlin/...` with `.kt`), the convention both tools' own
+/// scaffolding uses, in the project root or one of its modules. `None` when no such file exists rather than guessing
+/// further (a nonstandard source layout, a generated class, or a Kotlin file
+/// named after something other than its class) — the caller shows the
+/// pass/fail summary regardless, just without a click-to-jump for that one row.
 pub fn test_source_file(project_root: &Path, classname: &str) -> Option<PathBuf> {
-    let relative = classname.replace('.', "/");
-    let candidate = project_root
-        .join("src")
-        .join("test")
-        .join("java")
-        .join(format!("{relative}.java"));
-    candidate.is_file().then_some(candidate)
+    let relative = classname.split('$').next().unwrap_or(classname).replace('.', "/");
+    module_dirs(project_root).into_iter().find_map(|module| {
+        TEST_SOURCES
+            .iter()
+            .map(|(dir, extension)| module.join("src").join("test").join(dir).join(format!("{relative}.{extension}")))
+            .find(|candidate| candidate.is_file())
+    })
 }
 
 /// The 1-based line a failing/errored test's own stack trace blames,
 /// within its own class — the first stack-frame line naming `classname`'s
-/// own simple (unqualified) name followed by `.java:<line>`, e.g. `at
+/// own simple (unqualified) name followed by `.java:<line>` (`.kt:` for Kotlin), e.g. `at
 /// com.example.CalcTest.addIsBroken(CalcTest.java:14)`. Verified against
 /// real JUnit 5 traces from both a real `mvn test`/`gradle test` failure
 /// (both tools produce this exact frame shape — a JUnit/AssertionFailedError
@@ -195,12 +239,19 @@ pub fn test_source_file(project_root: &Path, classname: &str) -> Option<PathBuf>
 /// such frame is found (an exception with no stack trace, or one that never
 /// actually re-enters the test's own class — both possible, if rare).
 pub fn failure_line(detail: &str, classname: &str) -> Option<usize> {
-    let simple_name = classname.rsplit('.').next().unwrap_or(classname);
-    let marker = format!("({simple_name}.java:");
-    let start = detail.find(&marker)? + marker.len();
-    let rest = &detail[start..];
-    let end = rest.find(')')?;
-    rest[..end].trim().parse().ok()
+    let simple_name = classname.split('$').next().unwrap_or(classname).rsplit('.').next().unwrap_or(classname);
+    ["java", "kt"]
+        .iter()
+        .filter_map(|extension| {
+            let marker = format!("({simple_name}.{extension}:");
+            let start = detail.find(&marker)?;
+            Some((start, start + marker.len()))
+        })
+        .min()
+        .and_then(|(_, start)| {
+            let rest = &detail[start..];
+            rest[..rest.find(')')?].trim().parse().ok()
+        })
 }
 
 /// Where a failing `case` actually lives, for click-to-jump: the standard
