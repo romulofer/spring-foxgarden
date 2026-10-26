@@ -220,6 +220,7 @@ impl Extension for SpringExtension {
             http_route_languages: vec![JAVA.to_string(), KOTLIN.to_string()],
             source_root_dir_names: vec!["java".to_string(), "kotlin".to_string()],
             workspace_edit_commands: vec!["java.apply.workspaceEdit".to_string()],
+            injections: Vec::new(),
             file_icons: vec![
                 FileIcon {
                     language_id: JAVA.to_string(),
