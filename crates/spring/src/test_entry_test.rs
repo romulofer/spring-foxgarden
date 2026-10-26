@@ -41,7 +41,8 @@ fn a_java_test_class_and_each_test_method_get_a_marker() {
             (9, "com.example.CalcTest#subtracts")
         ]
     );
-    assert!(targets.iter().all(|t| t.kind == RunKind::Test));
+    assert_eq!(targets[0].kind, RunKind::Test);
+    assert!(targets[1..].iter().all(|t| t.kind == RunKind::SingleTest));
     assert_eq!(targets[0].label, "CalcTest");
     assert_eq!(targets[1].label, "adds");
 }

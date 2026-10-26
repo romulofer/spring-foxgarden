@@ -51,7 +51,7 @@ pub fn test_targets(tree: &Tree, source: &str, language_id: &str) -> Vec<RunTarg
         let name = source[method.byte_range()].trim_matches('`').to_string();
         out.push(RunTarget {
             line: method.start_position().row,
-            kind: RunKind::Test,
+            kind: RunKind::SingleTest,
             entry_point: format!("{class_entry}#{name}"),
             label: name,
         });
