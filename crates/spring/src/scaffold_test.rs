@@ -303,3 +303,15 @@ fn a_template_of_another_extension_is_not_scaffolded_here() {
     };
     assert!(scaffold_files(&spec).is_none());
 }
+
+#[test]
+fn only_the_gradle_scaffolds_carry_the_no_wrapper_note_in_both_languages() {
+    for scaffold in contributions() {
+        if scaffold.build_tool_id == "gradle" {
+            assert!(scaffold.note("pt-BR").unwrap().contains("Wrapper"));
+            assert!(scaffold.note("en-US").unwrap().starts_with("No Gradle Wrapper"));
+        } else {
+            assert!(scaffold.notes.is_empty(), "{}", scaffold.build_tool_id);
+        }
+    }
+}

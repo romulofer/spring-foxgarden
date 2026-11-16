@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use fg_extension::{LanguageId, ScaffoldContribution, ScaffoldSpec};
+use fg_extension::{LanguageId, LocalizedText, ScaffoldContribution, ScaffoldSpec};
 
 use crate::build_tools::{GRADLE, MAVEN};
 use crate::{JAVA, KOTLIN};
@@ -15,6 +15,15 @@ use crate::{JAVA, KOTLIN};
 /// an execution environment, from the oldest release a real project still
 /// targets in practice to the newest LTS.
 const JAVA_RELEASES: [u32; 4] = [8, 11, 17, 21];
+
+/// What the wizard tells a user who picks Gradle: no wrapper is generated, so the
+/// project builds with the Gradle already installed.
+fn gradle_notes() -> Vec<LocalizedText> {
+    vec![
+        LocalizedText::new("pt-BR", "Nenhum Gradle Wrapper é gerado — use um Gradle já instalado na máquina."),
+        LocalizedText::new("en-US", "No Gradle Wrapper is generated — use a Gradle already installed on your machine."),
+    ]
+}
 
 /// The four project kinds this extension scaffolds: each JVM language on
 /// each build tool.
@@ -28,6 +37,8 @@ pub fn contributions() -> Vec<ScaffoldContribution> {
                 template_id: String::new(),
                 template_name: String::new(),
                 runtime_versions: JAVA_RELEASES.to_vec(),
+                notes: if tool == GRADLE { gradle_notes() } else { Vec::new() },
+                runtime_label: vec![LocalizedText::new("pt-BR", "Versão do Java"), LocalizedText::new("en-US", "Java release")],
             })
         })
         .collect()

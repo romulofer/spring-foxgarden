@@ -28,10 +28,10 @@ use std::process::Command;
 
 use fg_extension::{
     AnalyzerFinding, Capability, AnalyzerRun, BuildProblem, BuildTask, BuildToolHandle, CodeGeneration, CommandSpec, ConfigProperty, Contributions, CoverageReport,
-    ArchiveKind, Extension, ExtensionManifest, FileIcon, LatestVersionSource, ServerInstall, GrammarContribution, GrammarSource, DocStub, HttpRoute, ImportCandidate, ImportEdit, Snippet, JdkRuntime, LanguageContribution,
+    ArchiveKind, Extension, ExtensionManifest, FileIcon, LatestVersionSource, ServerInstall, GrammarContribution, GrammarSource, DocStub, HttpRoute, ImportCandidate, ImportEdit, Snippet, InstalledRuntime, LanguageContribution,
     DebugAdapterContribution, DebugLaunch, HostRuntime, LanguageId, LanguageServerContribution, MemberView, NodeKinds, ProjectRelease, ReceiverType, ResolvedServerStart,
     RunSpec, RunTarget, ScaffoldSpec, ServerStartContext, TestCase, TestFailureLocation, TypeDeclaration, TypeFields,
-    TypeMember, VirtualDocuments, CURRENT_SCHEMA_VERSION,
+    TypeMember, VirtualDocuments, CURRENT_SCHEMA_VERSION, ProfileRequest,
 };
 
 mod analyzers;
@@ -56,6 +56,7 @@ pub mod maven;
 mod methods;
 mod snippets;
 pub mod run;
+mod profiler;
 pub mod test_entry;
 pub mod test_report;
 mod xml;
@@ -135,6 +136,7 @@ impl Extension for SpringExtension {
                 },
             ],
             analyzers: analyzers::contributions(),
+            profilers: profiler::contributions(),
             // Breakpoints go through java-debug, which serves Java only —
             // there's no evidence it debugs Kotlin, and a gutter that can
             // never pause anything would mislead.
@@ -234,8 +236,8 @@ impl Extension for SpringExtension {
         }
     }
 
-    fn jdk_runtimes(&self) -> Vec<JdkRuntime> {
-        jdk_runtimes_snapshot()
+    fn installed_runtimes(&self) -> Vec<InstalledRuntime> {
+        installed_runtimes_snapshot()
     }
 
     fn detect_runtime(&self, runtime_id: &str, home: &Path) -> Result<fg_extension::RuntimeInstall, String> {
@@ -408,6 +410,10 @@ impl Extension for SpringExtension {
         analyzers::run(analyzer_id, run)
     }
 
+    fn profiler_command(&self, profiler_id: &str, launcher: &Path, request: &ProfileRequest) -> Option<CommandSpec> {
+        profiler::command(profiler_id, launcher, request)
+    }
+
     fn doc_stub(&self, language_id: &str, tree: &tree_sitter::Tree, source: &str, byte: usize) -> Option<DocStub> {
         doc_stub::doc_stub(tree, source, language_id, byte)
     }
@@ -530,13 +536,13 @@ fn resolve_jdtls(ctx: &ServerStartContext) -> Result<ResolvedServerStart, String
 
 fn jdtls_initialization_options(ctx: &ServerStartContext, debug_bundles: &[String]) -> String {
     let runtimes: Vec<serde_json::Value> = ctx
-        .jdk_runtimes
+        .installed_runtimes
         .iter()
         .map(|r| {
             serde_json::json!({
                 "name": r.name,
                 "path": r.path.display().to_string(),
-                "default": Some(r.major) == ctx.java_release,
+                "default": Some(r.major) == ctx.runtime_release,
             })
         })
         .collect();
@@ -553,7 +559,7 @@ fn jdtls_initialization_options(ctx: &ServerStartContext, debug_bundles: &[Strin
 
 fn jdtls_restart_key(ctx: &ServerStartContext, debug_bundles: &[String]) -> String {
     let runtimes_key: String = ctx
-        .jdk_runtimes
+        .installed_runtimes
         .iter()
         .map(|r| format!("{}:{}", r.major, r.path.display()))
         .collect::<Vec<_>>()
@@ -562,7 +568,7 @@ fn jdtls_restart_key(ctx: &ServerStartContext, debug_bundles: &[String]) -> Stri
         "{binary}|{java_home}|{java_release:?}|{runtimes_key}|{debug_bundles:?}",
         binary = ctx.configured_binary.trim(),
         java_home = ctx.runtime_home,
-        java_release = ctx.java_release,
+        java_release = ctx.runtime_release,
     )
 }
 
@@ -768,18 +774,18 @@ fn xdg_config_root() -> Result<PathBuf, String> {
 // ──────────────────────────────────────────────────────────────────────────
 // JDK discovery — background scan for the language server's runtime list
 
-static INSTALLED_RUNTIMES: std::sync::OnceLock<std::sync::Mutex<Option<Vec<JdkRuntime>>>> =
+static INSTALLED_RUNTIMES: std::sync::OnceLock<std::sync::Mutex<Option<Vec<InstalledRuntime>>>> =
     std::sync::OnceLock::new();
 static RUNTIME_SCAN_STARTED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
-fn runtimes_cache() -> &'static std::sync::Mutex<Option<Vec<JdkRuntime>>> {
+fn runtimes_cache() -> &'static std::sync::Mutex<Option<Vec<InstalledRuntime>>> {
     INSTALLED_RUNTIMES.get_or_init(|| std::sync::Mutex::new(None))
 }
 
 /// Non-blocking snapshot of the JDK scan result. Empty until the background
 /// scan (started here on first call) completes.
-fn jdk_runtimes_snapshot() -> Vec<JdkRuntime> {
+fn installed_runtimes_snapshot() -> Vec<InstalledRuntime> {
     if let Some(found) = runtimes_cache().lock().ok().and_then(|c| c.clone()) {
         return found;
     }
@@ -794,13 +800,13 @@ fn jdk_runtimes_snapshot() -> Vec<JdkRuntime> {
     Vec::new()
 }
 
-fn scan_installed_runtimes() -> Vec<JdkRuntime> {
+fn scan_installed_runtimes() -> Vec<InstalledRuntime> {
     let candidates = jdk_home_candidates(
         std::env::var_os("JAVA_HOME").map(PathBuf::from),
         java_on_path(),
         &jdk_search_roots(),
     );
-    let mut runtimes: Vec<JdkRuntime> = Vec::new();
+    let mut runtimes: Vec<InstalledRuntime> = Vec::new();
     for home in candidates {
         let Some(major) = java_major_at(&home) else {
             continue;
@@ -808,7 +814,7 @@ fn scan_installed_runtimes() -> Vec<JdkRuntime> {
         if runtimes.iter().any(|r| r.major == major) {
             continue;
         }
-        runtimes.push(JdkRuntime {
+        runtimes.push(InstalledRuntime {
             major,
             name: execution_environment_name(major),
             path: home,
