@@ -55,6 +55,13 @@
 (line_comment) @comment
 (block_comment) @comment
 
+; KDoc: a `/** ... */` block comment, told from a plain `/* ... */` one by its
+; leading text, as Java's query does. Declared after the generic `@comment`
+; so it wins the same-range conflict `highlight_spans` resolves for the
+; later pattern.
+((block_comment) @comment.doc
+ (#match? @comment.doc "^/\\*\\*"))
+
 (string_literal) @string
 (multiline_string_literal) @string
 (character_literal) @string
