@@ -97,6 +97,13 @@
 ; nested inside a constructor-argument list instead.
 (enum_entry (identifier) @constant)
 
+; Member properties: a `val`/`var` declared directly in a class or object body.
+; A local `val` is the same node type but sits in a function body, so it is
+; not matched.
+(class_body
+  (property_declaration
+    (variable_declaration (identifier) @property)))
+
 (function_declaration name: (identifier) @function)
 
 ; Call expressions: `foo()` (callee is a bare identifier, anchored first so
