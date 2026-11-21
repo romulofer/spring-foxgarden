@@ -62,6 +62,18 @@
 ((block_comment) @comment.doc
  (#match? @comment.doc "^/\\*\\*"))
 
+; Parameters: the name is the direct `identifier` child; the type's own
+; identifiers sit under `type`, so they are not matched.
+(parameter (identifier) @variable.parameter)
+(class_parameter (identifier) @variable.parameter)
+
+; Operators, by the `operator` field the grammar gives each of these.
+(binary_expression operator: _ @operator)
+(unary_expression operator: _ @operator)
+(assignment operator: _ @operator)
+
+(label) @label
+
 (string_literal) @string
 (multiline_string_literal) @string
 (character_literal) @string
