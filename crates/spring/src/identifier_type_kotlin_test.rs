@@ -97,3 +97,23 @@ fn an_undeclared_name_returns_none() {
     let cursor = source.find("val x").unwrap();
     assert_eq!(type_of_identifier_kotlin(&tree, source, cursor, "neverDeclared"), None);
 }
+
+#[test]
+fn a_local_declared_after_the_cursor_is_not_yet_in_scope() {
+    let source = "class A(val repo: Repo) {\n    fun f() {\n        repo.\n        val repo = Other()\n    }\n}\n";
+    let mut parser = parser(tree_sitter_kotlin_ng::LANGUAGE.into());
+    let tree = parser.parse(source, None).expect("parse");
+    let cursor = source.find("repo.").unwrap();
+    assert_eq!(type_of_identifier_kotlin(&tree, source, cursor, "repo").as_deref(), Some("Repo"));
+}
+
+#[test]
+fn the_nearest_preceding_local_of_a_name_wins() {
+    let source = "class A {\n    fun f() {\n        val a = One()\n        a.x()\n        val a = Two()\n        a.y()\n    }\n}\n";
+    let mut parser = parser(tree_sitter_kotlin_ng::LANGUAGE.into());
+    let tree = parser.parse(source, None).expect("parse");
+    let first = source.find("a.x").unwrap();
+    let second = source.find("a.y").unwrap();
+    assert_eq!(type_of_identifier_kotlin(&tree, source, first, "a").as_deref(), Some("One"));
+    assert_eq!(type_of_identifier_kotlin(&tree, source, second, "a").as_deref(), Some("Two"));
+}

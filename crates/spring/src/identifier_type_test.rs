@@ -106,3 +106,26 @@ fn kotlin_local_val_shadows_a_constructor_property() {
     let cursor = source.find("repo.").unwrap();
     assert_eq!(type_of_identifier_kotlin(&tree, source, cursor, "repo").as_deref(), Some("Other"));
 }
+
+/// A local declared after the cursor is not in scope there, so the field wins.
+#[test]
+fn a_local_declared_after_the_cursor_is_not_yet_in_scope() {
+    let source = "class Foo {\n    private Bar shared;\n    void run() {\n        int x = 0;\n        Baz shared = new Baz();\n    }\n}\n";
+    let tree = parsed(source);
+    let cursor = source.find("int x").unwrap();
+    assert_eq!(
+        type_of_identifier_java(&tree, source, cursor, "shared"),
+        Some("Bar".to_string())
+    );
+}
+
+/// Of two same-named locals, the nearest one before the cursor wins.
+#[test]
+fn the_nearest_preceding_local_of_a_name_wins() {
+    let source = "class Foo {\n    void run() {\n        Bar a = null;\n        a.f();\n        Baz a = null;\n        a.g();\n    }\n}\n";
+    let tree = parsed(source);
+    let first = source.find("a.f").unwrap();
+    let second = source.find("a.g").unwrap();
+    assert_eq!(type_of_identifier_java(&tree, source, first, "a"), Some("Bar".to_string()));
+    assert_eq!(type_of_identifier_java(&tree, source, second, "a"), Some("Baz".to_string()));
+}

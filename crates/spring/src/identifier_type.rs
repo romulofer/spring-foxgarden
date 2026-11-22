@@ -54,29 +54,40 @@ fn parameter_type(function: Node, source: &str, name: &str) -> Option<String> {
     None
 }
 
-/// A simpler "anywhere in the enclosing method" scan rather than a precise
-/// backward-from-cursor one (`SPEC.md` §3a's own documented first-cut
-/// simplification) — a variable declared *after* the cursor being wrongly
-/// offered is a rare, low-consequence shadowing edge case.
-fn local_variable_type(node: Node, source: &str, name: &str) -> Option<String> {
-    if node.kind() == "local_variable_declaration" {
-        let type_node = node.child_by_field_name("type")?;
+/// The nearest declaration of local `name` at or before `cursor_byte` in
+/// the subtree: a variable declared after the cursor is not in scope yet,
+/// and of two same-named locals the later preceding one wins. Subtrees that
+/// begin after the cursor are not walked. Block scoping is not modelled.
+fn local_variable_type(node: Node, source: &str, name: &str, cursor_byte: usize) -> Option<String> {
+    nearest_local_variable(node, source, name, cursor_byte).map(|(_, raw_type)| raw_type)
+}
+
+fn nearest_local_variable(node: Node, source: &str, name: &str, cursor_byte: usize) -> Option<(usize, String)> {
+    if node.start_byte() > cursor_byte {
+        return None;
+    }
+    let mut best = None;
+    if node.kind() == "local_variable_declaration"
+        && let Some(type_node) = node.child_by_field_name("type")
+    {
         let mut declarator_cursor = node.walk();
         for declarator in node.children_by_field_name("declarator", &mut declarator_cursor) {
             if let Some(decl_name) = declarator.child_by_field_name("name")
                 && &source[decl_name.byte_range()] == name
             {
-                return Some(source[type_node.byte_range()].to_string());
+                best = Some((node.start_byte(), source[type_node.byte_range()].to_string()));
             }
         }
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        if let Some(found) = local_variable_type(child, source, name) {
-            return Some(found);
+        if let Some(found) = nearest_local_variable(child, source, name, cursor_byte)
+            && best.as_ref().is_none_or(|(start, _)| found.0 >= *start)
+        {
+            best = Some(found);
         }
     }
-    None
+    best
 }
 
 /// Resolves a bare identifier `name`'s declared type at `cursor_byte`:
@@ -92,7 +103,7 @@ pub fn type_of_identifier_java(tree: &Tree, source: &str, cursor_byte: usize, na
         if let Some(raw_type) = parameter_type(function, source, name) {
             return Some(simple_name(&raw_type));
         }
-        if let Some(raw_type) = local_variable_type(function, source, name) {
+        if let Some(raw_type) = local_variable_type(function, source, name, cursor_byte) {
             return Some(simple_name(&raw_type));
         }
     }
@@ -221,22 +232,36 @@ pub(crate) fn property_declaration_type(property: Node, source: &str) -> Option<
     Some(callee_text.to_string())
 }
 
-fn local_property_type(node: Node, source: &str, name: &str) -> Option<String> {
+/// Kotlin's counterpart of `local_variable_type`: the nearest
+/// `property_declaration` of `name` at or before `cursor_byte`.
+fn local_property_type(node: Node, source: &str, name: &str, cursor_byte: usize) -> Option<String> {
+    nearest_local_property(node, source, name, cursor_byte)?.1
+}
+
+/// The type is `None` when the nearest declaration's type cannot be told,
+/// so an earlier, typed declaration of the same name is not used instead.
+fn nearest_local_property(node: Node, source: &str, name: &str, cursor_byte: usize) -> Option<(usize, Option<String>)> {
+    if node.start_byte() > cursor_byte {
+        return None;
+    }
+    let mut best = None;
     if node.kind() == "property_declaration"
         && let Some(var_decl) = child_by_kind(node, "variable_declaration")
     {
         let (ident, _) = identifier_and_type_children(var_decl);
         if ident.is_some_and(|n| &source[n.byte_range()] == name) {
-            return property_declaration_type(node, source);
+            best = Some((node.start_byte(), property_declaration_type(node, source)));
         }
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        if let Some(found) = local_property_type(child, source, name) {
-            return Some(found);
+        if let Some(found) = nearest_local_property(child, source, name, cursor_byte)
+            && best.as_ref().is_none_or(|(start, _)| found.0 >= *start)
+        {
+            best = Some(found);
         }
     }
-    None
+    best
 }
 
 fn class_body_property_type(class_body: Node, source: &str, name: &str) -> Option<String> {
@@ -270,7 +295,7 @@ pub fn type_of_identifier_kotlin(tree: &Tree, source: &str, cursor_byte: usize, 
 
     if let Some(function) = enclosing_function_kotlin(start)
         && let Some(raw_type) = parameter_type_kotlin(function, source, name)
-            .or_else(|| local_property_type(function, source, name))
+            .or_else(|| local_property_type(function, source, name, cursor_byte))
     {
         return Some(simple_name(&raw_type));
     }
