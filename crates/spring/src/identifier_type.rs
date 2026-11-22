@@ -112,7 +112,7 @@ pub fn type_of_identifier_java(tree: &Tree, source: &str, cursor_byte: usize, na
     // `include_static: true` — a bare identifier referring to one of the
     // enclosing class's own static fields is legitimate, unlike
     // `fields_in_type`'s external-listing call sites which skip statics.
-    let field = fields_in_class_body(body, source, true)
+    let field = fields_in_class_body(body, source, true, true)
         .into_iter()
         .find(|f| f.name == name)?;
     Some(simple_name(&field.java_type))

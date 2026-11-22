@@ -62,20 +62,20 @@ pub fn supertype(language_id: &str, tree: &Tree, source: &str, type_name: &str) 
 pub fn type_members(language_id: &str, tree: &Tree, source: &str, type_name: &str, view: MemberView) -> Vec<TypeMember> {
     let (fields, methods) = match (language_id, view) {
         (JAVA, MemberView::Inside) => (
-            fields_in_type(tree, source, type_name, true),
+            fields_in_type(tree, source, type_name, true, true),
             all_methods_in_type(tree, source, type_name),
         ),
         (JAVA, MemberView::Outside) => (
-            fields_in_type(tree, source, type_name, false),
+            fields_in_type(tree, source, type_name, false, false),
             methods_in_type(tree, source, type_name),
         ),
         (JAVA, MemberView::Overridable) => (Vec::new(), methods_in_type(tree, source, type_name)),
         (KOTLIN, MemberView::Inside) => (
-            kotlin_properties_in_type(tree, source, type_name),
+            kotlin_properties_in_type(tree, source, type_name, true),
             all_kotlin_functions_in_type(tree, source, type_name),
         ),
         (KOTLIN, MemberView::Outside) => (
-            kotlin_properties_in_type(tree, source, type_name),
+            kotlin_properties_in_type(tree, source, type_name, false),
             kotlin_functions_in_type(tree, source, type_name),
         ),
         _ => return Vec::new(),

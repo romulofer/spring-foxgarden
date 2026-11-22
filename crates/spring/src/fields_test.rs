@@ -155,7 +155,7 @@ fn tree_of(source: &str) -> Tree {
 fn fields_in_type_finds_a_named_types_fields() {
     let source = "class Foo {\n    private int x;\n}\nclass Bar {\n    private int y;\n}\n";
     let tree = tree_of(source);
-    let fields = fields_in_type(&tree, source, "Bar", false);
+    let fields = fields_in_type(&tree, source, "Bar", false, true);
     assert_eq!(
         fields,
         vec![FieldInfo {
@@ -170,7 +170,7 @@ fn fields_in_type_finds_a_named_types_fields() {
 fn fields_in_type_skips_static_fields_by_default() {
     let source = "class Foo {\n    private static int counter;\n    private int id;\n}\n";
     let tree = tree_of(source);
-    let fields = fields_in_type(&tree, source, "Foo", false);
+    let fields = fields_in_type(&tree, source, "Foo", false, true);
     assert_eq!(fields.len(), 1);
     assert_eq!(fields[0].name, "id");
 }
@@ -179,7 +179,7 @@ fn fields_in_type_skips_static_fields_by_default() {
 fn fields_in_type_includes_static_fields_when_asked() {
     let source = "class Foo {\n    private static int counter;\n    private int id;\n}\n";
     let tree = tree_of(source);
-    let fields = fields_in_type(&tree, source, "Foo", true);
+    let fields = fields_in_type(&tree, source, "Foo", true, true);
     assert_eq!(fields.len(), 2);
     assert!(fields.iter().any(|f| f.name == "counter"));
 }
@@ -188,7 +188,7 @@ fn fields_in_type_includes_static_fields_when_asked() {
 fn fields_in_type_returns_empty_for_an_unknown_type() {
     let source = "class Foo {\n    private int x;\n}\n";
     let tree = tree_of(source);
-    assert_eq!(fields_in_type(&tree, source, "NoSuchType", false), vec![]);
+    assert_eq!(fields_in_type(&tree, source, "NoSuchType", false, true), vec![]);
 }
 
 /// Modifiers are read from the modifier tokens, not the declaration's text:
@@ -200,4 +200,27 @@ fn annotation_arguments_are_not_read_as_modifiers() {
     let classes = classes_in(source);
     let fields: Vec<(&str, bool)> = classes[0].fields.iter().map(|f| (f.name.as_str(), f.is_final)).collect();
     assert_eq!(fields, [("url", false), ("limit", false)]);
+}
+
+#[test]
+fn fields_in_type_skips_private_fields_unless_asked() {
+    let source = "class Bar {\n    private int secret;\n    int open;\n    @Named(\"private\") int annotated;\n}\n";
+    let tree = tree_of(source);
+    let outside: Vec<_> = fields_in_type(&tree, source, "Bar", false, false)
+        .into_iter()
+        .map(|f| f.name)
+        .collect();
+    assert_eq!(outside, vec!["open", "annotated"]);
+    assert_eq!(fields_in_type(&tree, source, "Bar", false, true).len(), 3);
+}
+
+#[test]
+fn fields_in_type_finds_interface_constants() {
+    let source = "interface Limits {\n    int MAX = 10;\n    String NAME = \"x\";\n    void run();\n}\n";
+    let tree = tree_of(source);
+    let names: Vec<_> = fields_in_type(&tree, source, "Limits", false, false)
+        .into_iter()
+        .map(|f| f.name)
+        .collect();
+    assert_eq!(names, vec!["MAX", "NAME"]);
 }

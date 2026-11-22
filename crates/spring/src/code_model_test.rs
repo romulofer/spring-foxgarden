@@ -31,7 +31,7 @@ fn java_inside_view_sees_every_member_fields_first() {
 fn java_outside_view_drops_statics_privates_and_finals() {
     let tree = java(JAVA_CLASS);
     let members = type_members(JAVA, &tree, JAVA_CLASS, "Foo", MemberView::Outside);
-    assert_eq!(names(&members), ["x", "run"]);
+    assert_eq!(names(&members), ["run"]);
 }
 
 #[test]

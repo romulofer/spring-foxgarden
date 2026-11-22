@@ -58,12 +58,16 @@ pub fn kotlin_superclass_name(tree: &Tree, source: &str, class_name: &str) -> Op
 /// `FieldInfo` for every `property_declaration` directly in `body`, in
 /// source order. Skips a property whose type can't be resolved (no
 /// explicit type, and an initializer that isn't a constructor call)
-/// rather than guessing.
-pub fn kotlin_properties_in_class_body(body: Node, source: &str) -> Vec<FieldInfo> {
+/// rather than guessing. `private` ones are skipped unless `unfiltered`
+/// (`this.`/`super.` sees everything, an external receiver does not).
+pub fn kotlin_properties_in_class_body(body: Node, source: &str, unfiltered: bool) -> Vec<FieldInfo> {
     let mut out = Vec::new();
     let mut cursor = body.walk();
     for member in body.named_children(&mut cursor) {
         if member.kind() != "property_declaration" {
+            continue;
+        }
+        if !unfiltered && has_private_modifier(member, source) {
             continue;
         }
         let Some(var_decl) = child_by_kind(member, "variable_declaration") else {
@@ -87,7 +91,7 @@ pub fn kotlin_properties_in_class_body(body: Node, source: &str) -> Vec<FieldInf
 /// Constructor-promoted `val`/`var` parameters of `class_node`'s primary
 /// constructor — `class Foo(val x: Int)`'s `x` is a member. A parameter
 /// with neither modifier is constructor-only, not a member, and excluded.
-fn kotlin_constructor_properties(class_node: Node, source: &str) -> Vec<FieldInfo> {
+fn kotlin_constructor_properties(class_node: Node, source: &str, unfiltered: bool) -> Vec<FieldInfo> {
     let mut out = Vec::new();
     let Some(primary_constructor) = child_by_kind(class_node, "primary_constructor") else {
         return out;
@@ -98,6 +102,9 @@ fn kotlin_constructor_properties(class_node: Node, source: &str) -> Vec<FieldInf
     let mut cursor = class_parameters.walk();
     for param in class_parameters.named_children(&mut cursor) {
         if param.kind() != "class_parameter" {
+            continue;
+        }
+        if !unfiltered && has_private_modifier(param, source) {
             continue;
         }
         let is_final = if child_by_kind(param, "val").is_some() {
@@ -123,13 +130,13 @@ fn kotlin_constructor_properties(class_node: Node, source: &str) -> Vec<FieldInf
 /// Every property `type_name` has: `class_body` properties plus
 /// constructor-promoted parameters. Completion's actual entry point
 /// (analogous to `fields::fields_in_type`).
-pub fn kotlin_properties_in_type(tree: &Tree, source: &str, type_name: &str) -> Vec<FieldInfo> {
+pub fn kotlin_properties_in_type(tree: &Tree, source: &str, type_name: &str, unfiltered: bool) -> Vec<FieldInfo> {
     let Some(class_node) = find_class_node(tree.root_node(), source, type_name) else {
         return Vec::new();
     };
-    let mut out = kotlin_constructor_properties(class_node, source);
+    let mut out = kotlin_constructor_properties(class_node, source, unfiltered);
     if let Some(body) = child_by_kind(class_node, "class_body") {
-        out.extend(kotlin_properties_in_class_body(body, source));
+        out.extend(kotlin_properties_in_class_body(body, source, unfiltered));
     }
     out
 }
@@ -158,6 +165,11 @@ fn is_private(modifiers: Node, source: &str) -> bool {
     modifiers
         .named_children(&mut cursor)
         .any(|c| c.kind() == "visibility_modifier" && &source[c.byte_range()] == "private")
+}
+
+/// Whether `declaration`'s own `modifiers` child declares `private`.
+fn has_private_modifier(declaration: Node, source: &str) -> bool {
+    child_by_kind(declaration, "modifiers").is_some_and(|modifiers| is_private(modifiers, source))
 }
 
 /// One function's signature, if `node` is a `function_declaration` —

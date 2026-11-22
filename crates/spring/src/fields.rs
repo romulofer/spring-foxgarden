@@ -29,18 +29,24 @@ pub struct ClassFields {
 /// instance state), completion (`fields_in_type`'s use) wants them
 /// included, since a class's constants are legitimately callable off
 /// `this.`/`super.`. A multi-variable declaration (`int x, y;`) yields one
-/// `FieldInfo` per variable.
-pub(crate) fn fields_in_class_body(body: Node, source: &str, include_static: bool) -> Vec<FieldInfo> {
+/// `FieldInfo` per variable. `private` fields are skipped unless
+/// `include_private`: accessors and `this.`/`super.` see them, a value of
+/// another type does not. An interface body's `constant_declaration`s count
+/// as fields too.
+pub(crate) fn fields_in_class_body(body: Node, source: &str, include_static: bool, include_private: bool) -> Vec<FieldInfo> {
     let mut fields = Vec::new();
     let mut body_cursor = body.walk();
     for field_decl in body.children(&mut body_cursor) {
-        if field_decl.kind() != "field_declaration" {
+        if !matches!(field_decl.kind(), "field_declaration" | "constant_declaration") {
             continue;
         }
         let Some(type_node) = field_decl.child_by_field_name("type") else {
             continue;
         };
         if has_modifier(field_decl, "static") && !include_static {
+            continue;
+        }
+        if has_modifier(field_decl, "private") && !include_private {
             continue;
         }
         let is_final = has_modifier(field_decl, "final");
@@ -93,7 +99,7 @@ fn collect_classes_with_fields(node: Node, source: &str, out: &mut Vec<ClassFiel
         && let Some(name_node) = node.child_by_field_name("name")
         && let Some(body) = node.child_by_field_name("body")
     {
-        let fields = fields_in_class_body(body, source, false);
+        let fields = fields_in_class_body(body, source, false, true);
         if !fields.is_empty() {
             out.push(ClassFields {
                 name: source[name_node.byte_range()].to_string(),
@@ -113,29 +119,42 @@ fn collect_classes_with_fields(node: Node, source: &str, out: &mut Vec<ClassFiel
 /// `tree` — analogous to `methods::methods_in_type` but for fields, and
 /// completion's (`SPEC.md` §4) entry point for "what fields does this
 /// type have," as opposed to `java_classes_with_fields`'s "every class
-/// that has fields" whole-file listing. `include_static` is threaded
-/// straight through to `fields_in_class_body`.
-pub fn fields_in_type(tree: &Tree, source: &str, type_name: &str, include_static: bool) -> Vec<FieldInfo> {
+/// that has fields" whole-file listing. `include_static` and
+/// `include_private` are threaded straight through to `fields_in_class_body`.
+pub fn fields_in_type(
+    tree: &Tree,
+    source: &str,
+    type_name: &str,
+    include_static: bool,
+    include_private: bool,
+) -> Vec<FieldInfo> {
     let mut out = Vec::new();
-    collect_fields_in_type(tree.root_node(), source, type_name, include_static, &mut out);
+    collect_fields_in_type(tree.root_node(), source, type_name, include_static, include_private, &mut out);
     out
 }
 
-fn collect_fields_in_type(node: Node, source: &str, type_name: &str, include_static: bool, out: &mut Vec<FieldInfo>) {
-    if node.kind() == "class_declaration"
+fn collect_fields_in_type(
+    node: Node,
+    source: &str,
+    type_name: &str,
+    include_static: bool,
+    include_private: bool,
+    out: &mut Vec<FieldInfo>,
+) {
+    if matches!(node.kind(), "class_declaration" | "interface_declaration")
         && node
             .child_by_field_name("name")
             .is_some_and(|n| &source[n.byte_range()] == type_name)
     {
         if let Some(body) = node.child_by_field_name("body") {
-            out.extend(fields_in_class_body(body, source, include_static));
+            out.extend(fields_in_class_body(body, source, include_static, include_private));
         }
         return;
     }
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_fields_in_type(child, source, type_name, include_static, out);
+        collect_fields_in_type(child, source, type_name, include_static, include_private, out);
     }
 }
 

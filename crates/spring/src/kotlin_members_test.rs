@@ -66,7 +66,7 @@ fn kotlin_properties_in_class_body_finds_explicit_and_inferred_typed_properties(
     let class_node = find_class_node(tree.root_node(), source, "Foo").unwrap();
     let body = child_by_kind(class_node, "class_body").unwrap();
 
-    let mut props = kotlin_properties_in_class_body(body, source);
+    let mut props = kotlin_properties_in_class_body(body, source, true);
     props.sort_by(|a, b| a.name.cmp(&b.name));
     assert_eq!(
         props,
@@ -92,7 +92,7 @@ fn kotlin_properties_in_class_body_skips_an_unresolvable_inferred_property() {
     let class_node = find_class_node(tree.root_node(), source, "Foo").unwrap();
     let body = child_by_kind(class_node, "class_body").unwrap();
 
-    assert_eq!(kotlin_properties_in_class_body(body, source), vec![]);
+    assert_eq!(kotlin_properties_in_class_body(body, source, true), vec![]);
 }
 
 #[test]
@@ -100,7 +100,7 @@ fn kotlin_properties_in_type_includes_constructor_promoted_properties() {
     let source = "class Foo(val x: Int, var y: String, z: Boolean) {\n    val w: Bar = Bar()\n}\n";
     let tree = parsed(source);
 
-    let mut props = kotlin_properties_in_type(&tree, source, "Foo");
+    let mut props = kotlin_properties_in_type(&tree, source, "Foo", true);
     props.sort_by(|a, b| a.name.cmp(&b.name));
     let names: Vec<&str> = props.iter().map(|f| f.name.as_str()).collect();
     assert_eq!(names, vec!["w", "x", "y"]);
@@ -112,7 +112,7 @@ fn kotlin_properties_in_type_includes_constructor_promoted_properties() {
 fn kotlin_properties_in_type_returns_empty_for_an_unknown_type() {
     let source = "class Foo {\n    val x: Int = 0\n}\n";
     let tree = parsed(source);
-    assert_eq!(kotlin_properties_in_type(&tree, source, "NoSuchType"), vec![]);
+    assert_eq!(kotlin_properties_in_type(&tree, source, "NoSuchType", true), vec![]);
 }
 
 #[test]
@@ -178,4 +178,19 @@ fn an_annotation_argument_mentioning_private_does_not_hide_a_function() {
     let tree = parsed(source);
     let names: Vec<String> = kotlin_functions_in_type(&tree, source, "Foo").into_iter().map(|f| f.name).collect();
     assert_eq!(names, ["open"]);
+}
+
+#[test]
+fn kotlin_properties_in_type_skips_private_properties_unless_unfiltered() {
+    let source = "class Foo(private val hidden: Int, val shown: Int) {\n    private val secret: String = \"\"\n    val open: String = \"\"\n}\n";
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&tree_sitter_kotlin_ng::LANGUAGE.into()).unwrap();
+    let tree = parser.parse(source, None).unwrap();
+    let mut outside: Vec<_> = kotlin_properties_in_type(&tree, source, "Foo", false)
+        .into_iter()
+        .map(|p| p.name)
+        .collect();
+    outside.sort();
+    assert_eq!(outside, vec!["open", "shown"]);
+    assert_eq!(kotlin_properties_in_type(&tree, source, "Foo", true).len(), 4);
 }
