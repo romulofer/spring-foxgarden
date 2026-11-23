@@ -168,3 +168,38 @@ fn build_output_is_not_searched_for_modules() {
     std::fs::write(stale.join("CalcTest.java"), "").unwrap();
     assert_eq!(test_source_file(dir.path(), "com.example.CalcTest"), None);
 }
+
+fn case(classname: &str, name: &str) -> TestCase {
+    TestCase {
+        classname: classname.to_string(),
+        name: name.to_string(),
+        outcome: TestOutcome::Passed,
+        detail: None,
+    }
+}
+
+#[test]
+fn a_class_filter_covers_that_class_and_its_nested_ones_only() {
+    let filter = "com.example.CalcTest";
+    assert!(matches_filter(&case("com.example.CalcTest", "adds"), filter));
+    assert!(matches_filter(&case("com.example.CalcTest$Nested", "deep"), filter));
+    assert!(!matches_filter(&case("com.example.CalcTestHelper", "adds"), filter));
+    assert!(!matches_filter(&case("com.example.OtherTest", "adds"), filter));
+}
+
+#[test]
+fn a_method_filter_covers_that_test_and_its_parameterized_runs() {
+    let filter = "com.example.CalcTest#adds";
+    assert!(matches_filter(&case("com.example.CalcTest", "adds"), filter));
+    assert!(matches_filter(&case("com.example.CalcTest", "adds(int)"), filter));
+    assert!(matches_filter(&case("com.example.CalcTest", "adds[1]"), filter));
+    assert!(!matches_filter(&case("com.example.CalcTest", "addsMore"), filter));
+    assert!(!matches_filter(&case("com.example.CalcTest", "subtracts"), filter));
+}
+
+#[test]
+fn a_kotlin_backtick_name_keeps_its_spaces_in_the_filter() {
+    let filter = "com.example.CalcTest#subtracts two";
+    assert!(matches_filter(&case("com.example.CalcTest", "subtracts two"), filter));
+    assert!(matches_filter(&case("com.example.CalcTest", "subtracts two()"), filter));
+}

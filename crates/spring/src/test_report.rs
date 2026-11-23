@@ -111,6 +111,22 @@ pub fn scan_test_reports(tool_id: &str, project_root: &Path) -> Vec<TestCase> {
     cases
 }
 
+/// Whether `case` is one a run narrowed to `filter` (`class` or
+/// `class#method`) covers: the class itself or a nested one, and for a method
+/// the test of that name, with the argument list or index a parameterized or
+/// repeated test appends.
+pub fn matches_filter(case: &TestCase, filter: &str) -> bool {
+    let (class, method) = match filter.split_once('#') {
+        Some((class, method)) => (class, Some(method)),
+        None => (filter, None),
+    };
+    let in_class = case.classname == class || case.classname.strip_prefix(class).is_some_and(|rest| rest.starts_with('$'));
+    in_class
+        && method.is_none_or(|method| {
+            case.name.strip_prefix(method).is_some_and(|rest| rest.is_empty() || rest.starts_with(['(', '[', ' ']))
+        })
+}
+
 /// Parses one JUnit-XML report (either tool's own shape — see this
 /// module's own doc comment) into its `TestCase`s. Pure/no I/O.
 pub fn parse_junit_xml(xml: &str) -> Result<Vec<TestCase>, String> {

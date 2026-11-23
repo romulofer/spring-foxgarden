@@ -328,6 +328,10 @@ impl Extension for SpringExtension {
         test_report::scan_test_reports(tool_id, project_root)
     }
 
+    fn test_case_matches(&self, _tool_id: &str, case: &TestCase, filter: &str) -> bool {
+        test_report::matches_filter(case, filter)
+    }
+
     fn test_failure_location(
         &self,
         _tool_id: &str,
