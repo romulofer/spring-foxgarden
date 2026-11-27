@@ -30,8 +30,7 @@ const KOTLIN_SNIPPETS: &[(&str, &str)] = &[
     ("trycatch", "try {\n    ${cursor}\n} catch (e: Exception) {\n    e.printStackTrace()\n}"),
 ];
 
-/// Java's reserved words (`CompletionKind::Keyword` candidates, `SPEC.md`
-/// §1's "Also includes") — not exhaustive of every contextual/restricted
+/// Java's reserved words (`CompletionKind::Keyword` candidates) — not exhaustive of every contextual/restricted
 /// identifier the JLS defines (`sealed`, `permits`, `yield` etc. are
 /// context-sensitive, not reserved everywhere), just the always-reserved
 /// set a word-completion popup is worth offering.

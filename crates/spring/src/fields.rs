@@ -117,7 +117,7 @@ fn collect_classes_with_fields(node: Node, source: &str, out: &mut Vec<ClassFiel
 
 /// Every field declared directly in `type_name`'s class body, anywhere in
 /// `tree` — analogous to `methods::methods_in_type` but for fields, and
-/// completion's (`SPEC.md` §4) entry point for "what fields does this
+/// completion's entry point for "what fields does this
 /// type have," as opposed to `java_classes_with_fields`'s "every class
 /// that has fields" whole-file listing. `include_static` and
 /// `include_private` are threaded straight through to `fields_in_class_body`.

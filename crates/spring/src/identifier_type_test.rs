@@ -68,7 +68,7 @@ fn an_undeclared_name_returns_none() {
 #[test]
 fn a_jdk_typed_local_resolves_syntactically_like_any_other_type() {
     // No classpath awareness at this layer — filtering JDK types out
-    // is `SPEC.md` §4's job (the resolved name fails to find a
+    // is the member lookup's job (the resolved name fails to find a
     // matching project source file), not this function's.
     let source = "class Foo {\n    void run() {\n        String s = \"hi\";\n        int x = 0;\n    }\n}\n";
     let tree = parsed(source);

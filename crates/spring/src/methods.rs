@@ -86,7 +86,7 @@ pub fn superclass_name(tree: &Tree, source: &str, class_name: &str) -> Option<St
 /// unless `unfiltered` is set, in which case
 /// every method is included regardless of modifiers — completion's
 /// `this.`/`super.` case, where code inside the same class can call any of
-/// its own members (`SPEC.md` §4).
+/// its own members.
 fn method_signature(node: Node, source: &str, unfiltered: bool) -> Option<MethodSignature> {
     if node.kind() != "method_declaration" {
         return None;
@@ -152,7 +152,7 @@ pub fn methods_in_type(tree: &Tree, source: &str, type_name: &str) -> Vec<Method
 
 /// Every method declared directly in `type_name`'s class or interface
 /// body, regardless of visibility/`static`/`final` — completion's
-/// `this.`/`super.` listing (`SPEC.md` §4), as opposed to
+/// `this.`/`super.` listing, as opposed to
 /// `methods_in_type`'s "what's overridable" filtering.
 pub fn all_methods_in_type(tree: &Tree, source: &str, type_name: &str) -> Vec<MethodSignature> {
     let mut out = Vec::new();

@@ -1,8 +1,8 @@
-//! Receiver-type resolution for dot-completion (`SPEC.md` §3): given a bare
+//! Receiver-type resolution for dot-completion: given a bare
 //! identifier `x` and where the cursor sits, what's `x`'s declared type?
 //! `this.`/`super.` aren't handled here — those route directly through
-//! `enclosing_class`/`superclass_name` at the call site (`SPEC.md` §3's own
-//! note that this needs "no new resolution logic, just routing"). This
+//! `enclosing_class`/`superclass_name` at the call site ("no new resolution logic, just
+//! routing"). This
 //! module only resolves case 2, a bare identifier: nearest declaration
 //! wins, in order parameter, then local variable, then field.
 //!
@@ -10,7 +10,7 @@
 //! local resolves here exactly like a project-local type would (e.g.
 //! `String s` resolves to `Some("String")`) — there's no classpath
 //! knowledge at this layer to tell the difference. Filtering those out is
-//! `SPEC.md` §4's job, where the resolved name fails to find a matching
+//! the member lookup's job, where the resolved name fails to find a matching
 //! project source file and the caller falls back to word-completion.
 
 use tree_sitter::{Node, Tree};
@@ -209,7 +209,7 @@ fn primary_constructor_class_parameter_type(class_node: Node, source: &str, name
 /// A `property_declaration`'s type: its `variable_declaration` child's own
 /// explicit `type` if there is one, checked *first* and returned without
 /// ever looking at the initializer — otherwise the narrow "looks like a
-/// constructor call" syntactic heuristic (`SPEC.md` §3b) against the
+/// constructor call" syntactic heuristic against the
 /// `property_declaration`'s own `expression` (initializer) sibling: a
 /// `call_expression` whose callee is a bare, uppercase-leading identifier.
 /// This is not real type inference — anything else as an initializer

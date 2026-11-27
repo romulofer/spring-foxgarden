@@ -48,7 +48,7 @@ fn fixed_http_method(annotation_name: &str) -> Option<Option<&'static str>> {
 /// The simple name of an `annotation`/`marker_annotation` node — ignores the
 /// rarer fully-qualified `@org.springframework....GetMapping` shape
 /// (`scoped_identifier`), same "match the simple name, not the qualified
-/// path" limitation `SPEC.md` §0/§2 accepts.
+/// path" limitation the route map accepts.
 fn annotation_name(node: Node, source: &str) -> Option<String> {
     let name = node.child_by_field_name("name")?;
     if name.kind() != "identifier" {

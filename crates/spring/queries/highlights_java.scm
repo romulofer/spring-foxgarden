@@ -35,7 +35,7 @@
 ; Parameters: `formal_parameter`'s own `name` field is unambiguous, distinct
 ; from a local variable declaration (which stays the generic `@variable`
 ; capture above, `scope_for_capture` has no branch for it and it renders as
-; plain text) — `PLAN.md` Track 2, `SPEC.md` §2.
+; plain text) — `PLAN.md` Track 2.
 (formal_parameter
   name: (identifier) @variable.parameter)
 
