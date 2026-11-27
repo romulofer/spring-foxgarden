@@ -60,6 +60,19 @@ pub fn test_targets(tree: &Tree, source: &str, language_id: &str) -> Vec<RunTarg
     out
 }
 
+/// The filter that runs every test among `targets` (a file's markers): the
+/// one top-level class they all sit in, whose filter also runs its nested
+/// classes' tests, as its own ▶ does. `None` when the file has no tests or
+/// holds them in several top-level classes.
+pub fn file_filter(targets: &[RunTarget]) -> Option<String> {
+    let mut classes = targets
+        .iter()
+        .filter(|target| target.kind != RunKind::Main)
+        .map(|target| target.entry_point.split(['#', '$']).next().unwrap_or_default());
+    let first = classes.next()?;
+    classes.all(|class| class == first).then(|| first.to_string())
+}
+
 fn enclosing_class<'a>(node: Node<'a>, kinds: &[&str]) -> Option<Node<'a>> {
     let mut current = node.parent();
     while let Some(parent) = current {

@@ -358,6 +358,10 @@ impl Extension for SpringExtension {
         targets
     }
 
+    fn file_test_filter(&self, _file: &Path, targets: &[RunTarget]) -> Option<String> {
+        test_entry::file_filter(targets)
+    }
+
     fn http_routes(&self, language_id: &str, tree: &tree_sitter::Tree, source: &str) -> Vec<HttpRoute> {
         http_routes::http_routes(tree, source, language_id)
     }

@@ -116,3 +116,29 @@ fn another_language_has_no_test_markers() {
     let tree = parse(tree_sitter_java::LANGUAGE.into(), source);
     assert!(test_targets(&tree, source, "yaml").is_empty());
 }
+
+#[test]
+fn a_files_tests_run_through_their_one_top_level_class() {
+    let targets = java(
+        "package com.example;\n\
+         class CalcTest {\n\
+         \x20   @Test void adds() {}\n\
+         \x20   @Nested class Inner { @Test void deep() {} }\n\
+         }\n",
+    );
+    assert_eq!(file_filter(&targets).as_deref(), Some("com.example.CalcTest"));
+}
+
+#[test]
+fn tests_in_two_top_level_classes_have_no_one_filter() {
+    let targets = kotlin("class ATest {\n    @Test fun a() {}\n}\nclass BTest {\n    @Test fun b() {}\n}\n");
+    assert_eq!(targets.len(), 4, "{targets:?}");
+    assert_eq!(file_filter(&targets), None);
+}
+
+#[test]
+fn a_file_without_tests_has_no_filter() {
+    let main = RunTarget { line: 0, kind: RunKind::Main, entry_point: "App".to_string(), label: "App".to_string() };
+    assert_eq!(file_filter(&[main]), None);
+    assert_eq!(file_filter(&[]), None);
+}
